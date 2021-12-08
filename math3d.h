@@ -323,9 +323,9 @@ mat4 mat4_scale(vec3 factor)
 mat4 mat4_translate(vec3 amount)
 {
     mat4 to_return = m4();
-    to_return.values[0][3] = amount.x;
-    to_return.values[1][3] = amount.y;
-    to_return.values[2][3] = amount.z;
+    to_return.values[3][0] = amount.x;
+    to_return.values[3][1] = amount.y;
+    to_return.values[3][2] = amount.z;
     return to_return;
 }
 
@@ -416,12 +416,13 @@ mat4 mat4_lookat(vec3 position, vec3 direction, vec3 up, vec3 right)
 }
 
 // Like lookat, but more streamlined for most cases becuase it assumes the up vector
-mat4 camera_lookat(vec3 position, vec3 direction)
+mat4 camera_lookat(vec3 position, vec3 target)
 {
     vec3 up = v3(0.0f, 1.0f, 0.0f);
-    vec3 camera_right = vec3_normalize(vec3_cross(up, direction));
-    vec3 camera_up = vec3_cross(direction, camera_right);
-    return mat4_lookat(position, direction, camera_up, camera_right);
+    vec3 camera_direction = vec3_normalize(vec3_subtract_vec3(position, target));
+    vec3 camera_right = vec3_normalize(vec3_cross(up, camera_direction));
+    vec3 camera_up = vec3_cross(camera_direction, camera_right);
+    return mat4_lookat(position, camera_direction, camera_up, camera_right);
 }
 
 #define translate mat4_translate

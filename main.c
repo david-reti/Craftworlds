@@ -110,7 +110,7 @@ void shader_value(SHADER_VALUE value, void* to_set) { shader_update_methods[valu
 void resize_renderer(SETTINGS* settings, mat4* camera_projection)
 {
     glViewport(0, 0, settings->window_width, settings->window_height);
-    *camera_projection = perspective_projection(settings->window_width / settings->window_height, settings->fov, 0.1, 1000);
+    *camera_projection = perspective_projection((float)settings->window_width / settings->window_height, settings->fov, 0.1, 1000);
     if(current_shader_program) shader_value(PROJECTION_MATRIX, camera_projection);
 }
 
@@ -191,10 +191,9 @@ int main(int argc, char** argv)
     shader_value(MODEL_MATRIX, &tranform);
 
     vec3 camera_position = v3(0.0f, 0.0f, 3.0f);
-    vec3 camera_target = v3(0.0f, 0.0f, 0.0f);
-    vec3 camera_direction = vec3_normalize(vec3_subtract_vec3(camera_position, camera_target));
-    mat4 camera_view = lookat(camera_position, camera_direction);
-    shader_value(VIEW_MATRIX, &camera_view);
+    vec3 camera_forward = v3(0.0f, 0.0f, -1.0f);
+    mat4 camera_view = m4();
+    float camera_speed = 0.0001f;
 
     /// Event Processing Loop
     bool running = true;
@@ -221,6 +220,19 @@ int main(int argc, char** argv)
         /// Handle Events
         if(key_pressed[SDLK_ESCAPE])
             running = false;
+
+        // Basic Camera Movement
+        if(key_pressed[SDLK_w])
+            camera_position = vec3_subtract_vec3(camera_position, v3(0.0f, 0.0f, camera_speed));
+        if(key_pressed[SDLK_s])
+            camera_position = vec3_add_vec3(camera_position, v3(0.0f, 0.0f, camera_speed));
+        if(key_pressed[SDLK_a])
+            camera_position = vec3_subtract_vec3(camera_position, vec3_multiply_scalar(vec3_normalize(vec3_cross(camera_forward, v3(0.0f, 1.0f, 0.0f))), camera_speed));
+        if(key_pressed[SDLK_d])
+            camera_position = vec3_add_vec3(camera_position, vec3_multiply_scalar(vec3_normalize(vec3_cross(camera_forward, v3(0.0f, 1.0f, 0.0f))), camera_speed));
+
+        camera_view = lookat(camera_position, vec3_add_vec3(camera_position, camera_forward));
+        shader_value(VIEW_MATRIX, &camera_view);
 
         /// Render
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
