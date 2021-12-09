@@ -77,7 +77,7 @@ vec3 vec3_subtract_vec3(vec3 vector1, vec3 vector2) { return vec3_add_vec3(vecto
 // Length - pythagoras theoren
 float vec3_length(vec3 vector)
 {
-    return sqrtf((vector.x * vector.x) + (vector.y * vector.y) + (vector.z * vector.z));
+    return sqrt((vector.x * vector.x) + (vector.y * vector.y) + (vector.z * vector.z));
 }
 
 // Normalize - keep the direction, but make the length 1
@@ -379,11 +379,11 @@ mat4 mat4_rotate_axis(vec3 axis, float radians)
 // The recommended order is to first scale, then rotate and lastly translate
 
 
-mat4 mat4_orthographic_projection(float width, float height, float near, float far)
+mat4 mat4_orthographic_projection(float aspect_ratio, float near, float far)
 {
     mat4 to_return = m4();
-    to_return.values[0][0] = 2.0 / width;
-    to_return.values[1][1] = 2.0 / height;
+    float right = aspect_ratio, left = -aspect_ratio, bottom = -1, top = 1;
+    to_return.values[0][0] = 1.0 / aspect_ratio;
     to_return.values[2][2] = -2.0 / (far - near);
     to_return.values[3][2] = -((far + near) / (far - near));
     return to_return;
@@ -412,17 +412,7 @@ mat4 mat4_lookat(vec3 position, vec3 direction, vec3 up, vec3 right)
     to_return.values[0][2] = direction.x;
     to_return.values[1][2] = direction.y;
     to_return.values[2][2] = direction.z;
-    return mat4_multiply_mat4(to_return, mat4_translate(vec3_negate(position)));
-}
-
-// Like lookat, but more streamlined for most cases becuase it assumes the up vector
-mat4 camera_lookat(vec3 position, vec3 target)
-{
-    vec3 up = v3(0.0f, 1.0f, 0.0f);
-    vec3 camera_direction = vec3_normalize(vec3_subtract_vec3(position, target));
-    vec3 camera_right = vec3_normalize(vec3_cross(up, camera_direction));
-    vec3 camera_up = vec3_cross(camera_direction, camera_right);
-    return mat4_lookat(position, camera_direction, camera_up, camera_right);
+    return mat4_multiply_mat4(mat4_translate(vec3_negate(position)), to_return);
 }
 
 #define translate mat4_translate
@@ -432,5 +422,4 @@ mat4 camera_lookat(vec3 position, vec3 target)
 #define rotate_axis mat4_rotate_axis
 #define orthographic_projection mat4_orthographic_projection
 #define perspective_projection mat4_perspective_projection
-#define lookat camera_lookat
 #endif
