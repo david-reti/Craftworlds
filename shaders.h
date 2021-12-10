@@ -16,6 +16,8 @@ unsigned int current_shader_program = 0;
 void update_shader_matrix(unsigned int shader_program, SHADER_VALUE value, void* to_set) { glUniformMatrix4fv(value, 1, GL_FALSE, (const GLfloat*)((mat4*)to_set)->values); };
 void (*shader_update_methods[])(unsigned int, SHADER_VALUE, void*) = { NULL, update_shader_matrix, update_shader_matrix, update_shader_matrix };
 
+typedef enum { VERTEX_POSITION = 0b10000000, VERTEX_UV = 0b01000000 } VERTEX_PROPERTY;
+
 unsigned int load_shader(unsigned long type, const char* path) // Internal
 {
     size_t source_length = 0;
@@ -76,6 +78,7 @@ unsigned int link_program(unsigned int vertex_shader, unsigned int fragment_shad
     }
 
     use_shader_program(to_return);
+    return to_return;
 }
 
 unsigned int shader_program(SHADER_TYPE vertex, SHADER_TYPE fragment)
@@ -88,5 +91,21 @@ unsigned int shader_program(SHADER_TYPE vertex, SHADER_TYPE fragment)
 }
 
 void set_shader_value(SHADER_VALUE value, void* to_set) { shader_update_methods[value](current_shader_program, value, to_set); }
+
+void unload_shaders()
+{
+    glDeleteShader(shaders[0]);
+    glDeleteShader(shaders[1]);
+}
+
+void configure_vertex_properties(VERTEX_PROPERTY properties_to_use)
+{
+    // Args: Attribute to configure, num elems, type, whether to normalize, stride (between attrib in next vertex), offset(where it begins)
+    if(properties_to_use & (1 << 7))
+    {
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(GL_FLOAT), 0);
+        glEnableVertexAttribArray(0);
+    }
+}
 
 #endif
