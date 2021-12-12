@@ -13,6 +13,8 @@ typedef struct vec3
     float x, y, z;
 } vec3;
 
+typedef vec3 POINT;
+
 typedef struct vec4
 {
     float x, y, z, w;
@@ -23,6 +25,8 @@ vec3 v3(float x, float y, float z)
     vec3 to_return = { .x = x, .y = y, .z = z };
     return to_return;
 }
+
+#define at v3
 
 vec4 v4(float x, float y, float z, float w)
 {

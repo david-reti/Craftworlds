@@ -34,7 +34,7 @@ int main(int argc, char** argv)
                           .fov = 45.0, 
                           .invert_y_axis = true,
                           .look_sensitivity = 0.5f,
-                          .show_fps = true
+                          .show_fps = false
                         };
     bool key_pressed[256] = { 0 };
 
@@ -72,8 +72,9 @@ int main(int argc, char** argv)
 
     // Create and configure the camera
     CAMERA player_camera = make_camera(PERSPECTIVE_PROJECTION, settings.window_width, settings.window_height, settings.fov);
+    POINT initial_player_position = at(12.0, 5 + 1.78, -12.0);
     resize_renderer(&settings, &player_camera);
-    move_camera(&player_camera, v3(1.0f, 1.0f, 2.0f));
+    move_camera(&player_camera, initial_player_position);
 
     float camera_speed = 3.0f;
     float camera_pitch_limit_bottom = 89.0f, camera_pitch_limit_top = -89.0f;
@@ -91,7 +92,10 @@ int main(int argc, char** argv)
 
         if(settings.show_fps)
         {
-            printf("\rfps: %lf", 1.0 / elapsed_time);
+            if(elapsed_time < 2)
+                printf("\rfps: >= 1000 (too high to measure with millisecond timer)");
+            else
+                printf("\rfps: %lf", 1.0 / elapsed_time);
             fflush(stdout);
         }
 
