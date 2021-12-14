@@ -6,8 +6,12 @@
 #include"math3d.h"
 #include"shaders.h"
 
+#ifdef DEBUG
+#include"timer.h"
+#endif
+
 #define CHUNK_SIZE 32
-#define CHUNK_MAX_HEIGHT 32
+#define CHUNK_MAX_HEIGHT 100
 #define CHUNK_INITIAL_ALLOC_BLOCKS 256 // The number of blocks to allocate vertex & index space for when a chunk is created. Increasing this reduces the number of allocations, but uses more memory
 
 typedef enum { FRONT_FACING_OUT, BACK_FACING_OUT, LEFT_FACING_OUT, RIGHT_FACING_OUT, TOP_FACING_OUT, BOTTOM_FACING_OUT } CUBE_FACE;
@@ -22,7 +26,7 @@ typedef struct CUBE
 typedef struct CHUNK
 {
     mat4 tranform;
-    POINT* vertices;
+    POINT* vertices, position;
     unsigned int vertex_array_object, vertex_buffer, index_buffer, *indices;
     unsigned long num_vertices, num_indices, vertex_capacity, index_capacity;
     CUBE* cubes;
@@ -73,7 +77,18 @@ CUBE* get_cube(POINT point)
     long long x = (long long)point.x, y = (long long)point.y, z = (long long)point.z;
     if(x < 0 || y < 0 || x >= CHUNK_SIZE || y >= CHUNK_MAX_HEIGHT || z > 0 || abs(z) >= CHUNK_SIZE)
         return &empty_cube;
-    return current_chunk->cubes + (x + (abs(z) * CHUNK_SIZE) + (y * CHUNK_MAX_HEIGHT * CHUNK_MAX_HEIGHT));
+    return current_chunk->cubes + (x + (abs(z) * CHUNK_SIZE) + (y * CHUNK_SIZE * CHUNK_SIZE));
+}
+
+POINT top_cube(float x, float z)
+{
+    float y = CHUNK_MAX_HEIGHT;
+    CUBE* on_top = get_cube(at(x, y, z));
+    while(on_top->type == EMPTY && y > 0)
+        on_top = get_cube(at(x, y--, z));
+    if(on_top->type != EMPTY)
+        return at(x, y, z);
+    return at(0, 0, 0);
 }
 
 // TODO: Rewrite this entire function - it's so inefficient
@@ -149,13 +164,54 @@ void place_block(BLOCK_TYPE type, POINT position)
     to_place->type = type;
 }
 
-// Very useful function, takes the array of cubes for a chunk and calculates its vertices and indices
-// This should be used for generating the blocks, while place_block is for interactively placing them
-void calculate_chunk_model()
+void remove_block(POINT position)
 {
     
 }
 
+// Generates the vertices and indices for a chunk based on its cube array. Useful for generation, but one-way only - can't remove existing faces
+void calculate_chunk_model()
+{
+    for(long long i = 0; i < CHUNK_SIZE; i++)
+    {
+        for(long long j = 0; j < CHUNK_MAX_HEIGHT; j++)
+        {
+            for(long long k = 0; k < CHUNK_SIZE; k++)
+            {  
+                CUBE* to_place = get_cube(at(i, j, -k));
+                if(to_place->type != EMPTY)
+                {
+                    if(current_chunk->num_vertices + 8 > current_chunk->vertex_capacity)
+                    {
+                        // Allocate more space for vertices and indices. Since there are more indices than vertices per cube, the number of indices grows faster as well
+                        current_chunk->vertices = realloc(current_chunk->vertices, (current_chunk->vertex_capacity *= 2) * sizeof(POINT));
+                        current_chunk->indices = realloc(current_chunk->indices, (current_chunk->index_capacity *= 4.5) * sizeof(unsigned int));
+                    }
+
+                    to_place->vertex_location = current_chunk->num_vertices;
+                    to_place->index_location = current_chunk->num_indices;
+                    cube_vertices(at(i, j, -k));
+
+                    // If there is no adjacent cube in each direction, add a face.
+                    if(get_cube(at(i, j, -k + 1))->type == EMPTY)
+                        cube_face(FRONT_FACING_OUT);
+                    if(get_cube(at(i, j, -k - 1))->type == EMPTY)
+                        cube_face(BACK_FACING_OUT);
+                    if(get_cube(at(i - 1, j, -k))->type == EMPTY)
+                        cube_face(LEFT_FACING_OUT);
+                    if(get_cube(at(i + 1, j, -k))->type == EMPTY)
+                        cube_face(RIGHT_FACING_OUT);
+                    if(get_cube(at(i, j + 1, -k))->type == EMPTY)
+                        cube_face(TOP_FACING_OUT);
+                    if(get_cube(at(i, j - 1, -k))->type == EMPTY)
+                        cube_face(BOTTOM_FACING_OUT);
+                  
+                    to_place->num_indices = current_chunk->num_indices - to_place->index_location;
+                }
+            }
+        }
+    }
+}
 
 // This is separated out because it's possible to create chunks in the existing chunk buffer
 CHUNK* allocate_chunk_memory()
@@ -169,23 +225,33 @@ CHUNK* allocate_chunk_memory()
     return to_return;
 }
 
-CHUNK* make_chunk()
+CHUNK* make_chunk(POINT position)
 {
     CHUNK* to_return = allocate_chunk_memory();
-    to_return->tranform = m4();
+    to_return->tranform = translate(position);
     current_chunk = to_return;
 
+    #ifdef DEBUG
+    LARGE_INTEGER chunk_gen_start_time, chunk_gen_end_time;
+    QueryPerformanceCounter(&chunk_gen_start_time);
+    #endif
     for(unsigned int i = 0; i < CHUNK_SIZE; i++)
     {
-        for(unsigned int j = 0; j < 5; j++)
+        for(unsigned int j = 0; j < 30; j++)
         {
             for(unsigned int k = 0; k < CHUNK_SIZE; k++)
             {
-                place_block(SOIL, at((float)i, (float)j, -((float)k)));
+                get_cube(at((float)i, (float)j, -((float)k)))->type = SOIL;
             }
         }
     }
-    
+    calculate_chunk_model();
+    #ifdef DEBUG
+    QueryPerformanceCounter(&chunk_gen_end_time);
+    double genTime = ((double)(chunk_gen_end_time.QuadPart - chunk_gen_start_time.QuadPart) / frequency.QuadPart);
+    printf("Generated chunk at (%.2f, %.2f): took %lf seconds, %lu vertices, %lu indices\n", position.x, position.z, genTime, current_chunk->num_vertices, current_chunk->num_indices);
+    #endif
+
     // Generate the VAO and buffers (vertex, index) for the chunk, then upload all the cubes to the buffers
     glGenVertexArrays(1, &(to_return->vertex_array_object));
     glBindVertexArray(to_return->vertex_array_object);

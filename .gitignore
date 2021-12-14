@@ -1,3 +1,4 @@
 .vscode/
 Craftworlds.exe
 *.o
+*.dll

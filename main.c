@@ -63,16 +63,18 @@ int main(int argc, char** argv)
     glEnable(GL_CULL_FACE);
     glFrontFace(GL_CW);
 
+    initialise_timer();
+
     /// Setting up the rendering - temporary
     // Load the vertex & fragment shaders
     unsigned int default_program = shader_program(DEFAULT_VERTEX, DEFAULT_FRAGMENT);
 
     // Make the first terrain chunk
-    CHUNK* chunk = make_chunk();
+    CHUNK* chunk = make_chunk(at(0.0f, 0.0f, 0.0f));
 
     // Create and configure the camera
     CAMERA player_camera = make_camera(PERSPECTIVE_PROJECTION, settings.window_width, settings.window_height, settings.fov);
-    POINT initial_player_position = at(12.0, 5 + 1.78, -12.0);
+    POINT initial_player_position = vec3_add_vec3(top_cube(10, -10), v3(0.0f, 2.78, 0.0f));
     resize_renderer(&settings, &player_camera);
     move_camera(&player_camera, initial_player_position);
 
@@ -80,7 +82,6 @@ int main(int argc, char** argv)
     float camera_pitch_limit_bottom = 89.0f, camera_pitch_limit_top = -89.0f;
 
     /// Event Processing Loop
-    initialise_timer();
     bool running = true;
     double elapsed_time = 0;
     while(running)
