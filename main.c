@@ -3,10 +3,10 @@
 #include<glad/glad.h>
 #include<SDL2/SDL_opengl.h>
 
-#include"math3d.h"
-#include"shaders.h"
-#include"camera.h"
 #include"world.h"
+#include"timer.h"
+#include"camera.h"
+#include"shaders.h"
 
 typedef struct SETTINGS
 {
@@ -34,7 +34,7 @@ int main(int argc, char** argv)
                           .fov = 45.0, 
                           .invert_y_axis = true,
                           .look_sensitivity = 0.5f,
-                          .show_fps = false
+                          .show_fps = true
                         };
     bool key_pressed[256] = { 0 };
 
@@ -80,22 +80,17 @@ int main(int argc, char** argv)
     float camera_pitch_limit_bottom = 89.0f, camera_pitch_limit_top = -89.0f;
 
     /// Event Processing Loop
+    initialise_timer();
     bool running = true;
-    double elapsed_time = 0, fps = 0;
-    unsigned long long current_time, last_frame_time = 0;
+    double elapsed_time = 0;
     while(running)
     {
         /// Get Elapsed Time
-        current_time = SDL_GetTicks();
-        elapsed_time = (current_time - last_frame_time) / 1000.0;
-        last_frame_time = current_time;
+        elapsed_time = get_elapsed_time();
 
         if(settings.show_fps)
         {
-            if(elapsed_time < 2)
-                printf("\rfps: >= 1000 (too high to measure with millisecond timer)");
-            else
-                printf("\rfps: %lf", 1.0 / elapsed_time);
+            printf("\rfps: %lf", 1.0 / elapsed_time);
             fflush(stdout);
         }
 
