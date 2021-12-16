@@ -1,8 +1,10 @@
 #ifndef WORLD_H
 #define WORLD_H
 #include<stdlib.h>
+#include<SDL2/SDL.h>
 #include<glad/glad.h>
 
+#include"util.h"
 #include"math3d.h"
 #include"shaders.h"
 
@@ -10,11 +12,11 @@
 #include"timer.h"
 #endif
 
-#define CHUNK_SIZE 32
-#define CHUNK_MAX_HEIGHT 100
+#define CHUNK_SIZE 32 // The maximum width and depth of chunks, in number of blocks
+#define CHUNK_MAX_HEIGHT 256 // The maximum height of chunks, in number of blocks
 #define CHUNK_INITIAL_ALLOC_BLOCKS 256 // The number of blocks to allocate vertex & index space for when a chunk is created. Increasing this reduces the number of allocations, but uses more memory
 
-typedef enum { FRONT_FACING_OUT, BACK_FACING_OUT, LEFT_FACING_OUT, RIGHT_FACING_OUT, TOP_FACING_OUT, BOTTOM_FACING_OUT } CUBE_FACE;
+typedef enum { CUBE_FACE_FRONT = 0b00000001, CUBE_FACE_BACK = 0b00000010, CUBE_FACE_LEFT = 0b00000100, CUBE_FACE_RIGHT = 0b00001000, CUBE_FACE_TOP = 0b00010000, CUBE_FACE_BOTTOM = 0b00100000 } CUBE_FACES;
 typedef enum { EMPTY, SOIL } BLOCK_TYPE;
 
 typedef struct CUBE
@@ -56,20 +58,80 @@ unsigned int cube_face_top_out[] =    { 1, 5, 3, 3, 5, 7 };
 unsigned int cube_face_bottom_out[] = { 0, 2, 6, 6, 4, 0 };
 unsigned int* faces[] = { cube_face_front_out, cube_face_back_out, cube_face_left_out, cube_face_right_out, cube_face_top_out, cube_face_bottom_out };
 
-void cube_vertices(POINT position)
-{   
-    memcpy(current_chunk->vertices + current_chunk->num_vertices, cube_v, sizeof(POINT) * 8);
-    for(unsigned long i = current_chunk->num_vertices; i < current_chunk->num_vertices + 8; i++)
-        current_chunk->vertices[i] = vec3_add_vec3(current_chunk->vertices[i], position);
-    current_chunk->num_vertices += 8;
+#define TILESET_SIZE 32 // Number of tiles in the texture - width and height
+#define TILE_TEXTURE_SIZE 32 // Width and height of each texture, in pixels 
+
+const char* tileset_paths[] = { "assets/tilesets/main.bmp" };
+typedef enum { MAIN_TILESET } TILESET_TYPE;
+SDL_Surface* tilesets[1] = { 0 }, *current_tileset = NULL; 
+
+void apply_tileset(TILESET_TYPE to_apply)
+{
+    if(!tilesets[to_apply])
+    {
+        if(!(tilesets[to_apply] = SDL_LoadBMP(tileset_paths[to_apply])))
+            exit_with_error("Could not load main tileset", SDL_GetError());
+    }
+    current_tileset = tilesets[to_apply];
 }
 
-void cube_face(CUBE_FACE face)
+POINT cube_vertex(unsigned char position_index, POINT place_at) { return vec3_add_vec3(cube_v[position_index], place_at); }
+
+void cube_faces(CUBE* cube_to_add, POINT position, CUBE_FACES faces_to_add)
 {
-    memcpy(current_chunk->indices + current_chunk->num_indices, faces[face], sizeof(unsigned int) * 6);
-    for(unsigned long i = current_chunk->num_indices; i < current_chunk->num_indices + 6; i++)
-        current_chunk->indices[i] += current_chunk->num_vertices - 8;
-    current_chunk->num_indices += 6;
+    if(current_chunk->num_vertices + 8 > current_chunk->vertex_capacity)
+    {
+        // Allocate more space for vertices and indices. Since there are more indices than vertices per cube, the number of indices grows faster as well
+        current_chunk->vertices = realloc(current_chunk->vertices, (current_chunk->vertex_capacity *= 2) * sizeof(POINT));
+        current_chunk->indices = realloc(current_chunk->indices, (current_chunk->index_capacity *= 4.5) * sizeof(unsigned int));
+    }
+
+    cube_to_add->vertex_location = current_chunk->num_vertices;
+    cube_to_add->index_location = current_chunk->num_indices;
+
+    // Copy only the required vertices into the chunk's vertex list
+    char vertices_to_copy = 0;
+    if(faces_to_add & 1)        // Front
+        vertices_to_copy |= 0b11110000;
+    if(faces_to_add & (1 << 1)) // Back
+        vertices_to_copy |= 0b00001111;
+    if(faces_to_add & (1 << 2)) // Left
+        vertices_to_copy |= 0b11001100;
+    if(faces_to_add & (1 << 3)) // Right
+        vertices_to_copy |= 0b00110011;
+    if(faces_to_add & (1 << 4)) // Top
+        vertices_to_copy |= 0b01010101;
+    if(faces_to_add & (1 << 5)) // Bottom
+        vertices_to_copy |= 0b10101010;
+
+    unsigned int num_vertices_added = 0, num_indices_added = 0, indices_added[8] = { 0 };
+    for(char i = 7; i >= 0; i--)
+    {
+        if(vertices_to_copy & (1 << i))
+        {
+            current_chunk->vertices[current_chunk->num_vertices + num_vertices_added] = cube_vertex(7 - i, position);
+            indices_added[7 - i] = current_chunk->num_vertices + num_vertices_added++;
+        }
+    }
+
+    unsigned int next_index;
+    for(unsigned char i = 0; i < 6; i++)
+    {
+        if(faces_to_add & (1 << i))
+        {
+            memcpy(current_chunk->indices + current_chunk->num_indices + num_indices_added, faces[i], sizeof(unsigned int) * 6);
+            for(unsigned long i = 0; i < 6; i++)
+            {
+                next_index = indices_added[current_chunk->indices[current_chunk->num_indices + num_indices_added + i]];
+                current_chunk->indices[current_chunk->num_indices + num_indices_added + i] = next_index;
+            }
+            num_indices_added += 6;
+        }
+    }
+
+    current_chunk->num_vertices += num_vertices_added;
+    current_chunk->num_indices += num_indices_added;
+    cube_to_add->num_indices = num_indices_added;
 }
 
 CUBE* get_cube(POINT point)
@@ -91,86 +153,8 @@ POINT top_cube(float x, float z)
     return at(0, 0, 0);
 }
 
-// TODO: Rewrite this entire function - it's so inefficient
-void remove_cube_face(CUBE* remove_from, CUBE_FACE to_remove)
-{
-    // Search for the face to remove at the cube's location in the chunk's index buffer.
-    // Only the first two indices need to be compared (every 6 indices) as they form a unique key 
-    for(unsigned long i = remove_from->index_location; i < remove_from->index_location + remove_from->num_indices; i += 6)
-    {
-        if(current_chunk->indices[i] - remove_from->vertex_location == faces[to_remove][0] && current_chunk->indices[i + 1] - remove_from->vertex_location == faces[to_remove][1])
-        {
-            memcpy(&(current_chunk->indices[i]), &(current_chunk->indices[i + 6]), (current_chunk->num_indices - i - 6) * sizeof(unsigned int));
-            current_chunk->num_indices -= 6;
-            remove_from->num_indices -= 6;
-            for(CUBE* i = current_chunk->cubes; i != current_chunk->cubes + (CHUNK_SIZE * CHUNK_MAX_HEIGHT * CHUNK_SIZE - 1); i++)
-            {
-                if(i->index_location > remove_from->index_location)
-                    i->index_location -= 6;
-            }
-        }
-    }
-}
-
-// This is meant good for interactively placing blocks, because it will check any existing blocks for conflicts. However, it is very slow
-void place_block(BLOCK_TYPE type, POINT position)
-{
-    if(current_chunk->num_vertices + 8 > current_chunk->vertex_capacity)
-    {
-        // Allocate more space for vertices and indices. Since there are more indices than vertices per cube, the number of indices grows faster as well
-        current_chunk->vertices = realloc(current_chunk->vertices, (current_chunk->vertex_capacity *= 2) * sizeof(POINT));
-        current_chunk->indices = realloc(current_chunk->indices, (current_chunk->index_capacity *= 4.5) * sizeof(unsigned int));
-    }
-
-    // Set the locations of the current cube's vertices and indices in the chunk's buffers
-    CUBE* to_place = get_cube(at(position.x, position.y, position.z));
-    to_place->vertex_location = current_chunk->num_vertices;
-    to_place->index_location = current_chunk->num_indices;
-
-    cube_vertices(position);
-
-    // If there is no adjacent cube in each direction, add a face. If there is already a cube there, remove the shared face
-    if(get_cube(at(position.x, position.y, position.z + 1))->type == EMPTY)
-        cube_face(FRONT_FACING_OUT);
-    else
-        remove_cube_face(get_cube(at(position.x, position.y, position.z + 1)), BACK_FACING_OUT);
-
-    if(get_cube(at(position.x, position.y, position.z - 1))->type == EMPTY)
-        cube_face(BACK_FACING_OUT);
-    else
-        remove_cube_face(get_cube(at(position.x, position.y, position.z - 1)), FRONT_FACING_OUT);
-
-    if(get_cube(at(position.x - 1, position.y, position.z))->type == EMPTY)
-        cube_face(LEFT_FACING_OUT);
-    else
-        remove_cube_face(get_cube(at(position.x - 1, position.y, position.z)), RIGHT_FACING_OUT);
-
-    if(get_cube(at(position.x + 1, position.y, position.z))->type == EMPTY)
-        cube_face(RIGHT_FACING_OUT);
-    else
-        remove_cube_face(get_cube(at(position.x + 1, position.y, position.z)), LEFT_FACING_OUT);
-
-    if(get_cube(at(position.x, position.y + 1, position.z))->type == EMPTY)
-        cube_face(TOP_FACING_OUT);
-    else
-        remove_cube_face(get_cube(at(position.x, position.y + 1, position.z)), BOTTOM_FACING_OUT);
-
-    if(get_cube(at(position.x, position.y - 1, position.z))->type == EMPTY)
-        cube_face(BOTTOM_FACING_OUT);
-    else
-        remove_cube_face(get_cube(at(position.x, position.y - 1, position.z)), TOP_FACING_OUT);
-
-    to_place->num_indices = current_chunk->num_indices - to_place->index_location;
-    to_place->type = type;
-}
-
-void remove_block(POINT position)
-{
-    
-}
-
-// Generates the vertices and indices for a chunk based on its cube array. Useful for generation, but one-way only - can't remove existing faces
-void calculate_chunk_model()
+// Generates the vertices and indices for a chunk based on its cube array.
+void recalculate_chunk_model()
 {
     for(long long i = 0; i < CHUNK_SIZE; i++)
     {
@@ -178,39 +162,44 @@ void calculate_chunk_model()
         {
             for(long long k = 0; k < CHUNK_SIZE; k++)
             {  
-                CUBE* to_place = get_cube(at(i, j, -k));
+                POINT cube_position = at(i, j, -k);
+                CUBE* to_place = get_cube(cube_position);
                 if(to_place->type != EMPTY)
-                {
-                    if(current_chunk->num_vertices + 8 > current_chunk->vertex_capacity)
-                    {
-                        // Allocate more space for vertices and indices. Since there are more indices than vertices per cube, the number of indices grows faster as well
-                        current_chunk->vertices = realloc(current_chunk->vertices, (current_chunk->vertex_capacity *= 2) * sizeof(POINT));
-                        current_chunk->indices = realloc(current_chunk->indices, (current_chunk->index_capacity *= 4.5) * sizeof(unsigned int));
-                    }
-
-                    to_place->vertex_location = current_chunk->num_vertices;
-                    to_place->index_location = current_chunk->num_indices;
-                    cube_vertices(at(i, j, -k));
-
+                {                    
                     // If there is no adjacent cube in each direction, add a face.
+                    CUBE_FACES faces_to_add = 0;
                     if(get_cube(at(i, j, -k + 1))->type == EMPTY)
-                        cube_face(FRONT_FACING_OUT);
+                        faces_to_add |= CUBE_FACE_FRONT;
                     if(get_cube(at(i, j, -k - 1))->type == EMPTY)
-                        cube_face(BACK_FACING_OUT);
+                        faces_to_add |= CUBE_FACE_BACK;
                     if(get_cube(at(i - 1, j, -k))->type == EMPTY)
-                        cube_face(LEFT_FACING_OUT);
+                        faces_to_add |= CUBE_FACE_LEFT;
                     if(get_cube(at(i + 1, j, -k))->type == EMPTY)
-                        cube_face(RIGHT_FACING_OUT);
+                        faces_to_add |= CUBE_FACE_RIGHT;
                     if(get_cube(at(i, j + 1, -k))->type == EMPTY)
-                        cube_face(TOP_FACING_OUT);
-                    if(get_cube(at(i, j - 1, -k))->type == EMPTY)
-                        cube_face(BOTTOM_FACING_OUT);
+                        faces_to_add |= CUBE_FACE_TOP;
+                    if(j && get_cube(at(i, j - 1, -k))->type == EMPTY)
+                        faces_to_add |= CUBE_FACE_BOTTOM;
                   
-                    to_place->num_indices = current_chunk->num_indices - to_place->index_location;
+                    // faces_to_add = CUBE_FACE_RIGHT;
+                    cube_faces(to_place, cube_position, faces_to_add);
                 }
             }
         }
     }
+}
+
+void place_block(BLOCK_TYPE type, POINT position)
+{
+    // Set the locations of the current cube's vertices and indices in the chunk's buffers
+    get_cube(at(position.x, position.y, position.z))->type = type;
+    recalculate_chunk_model();
+}
+
+void remove_block(POINT position)
+{
+    get_cube(at(position.x, position.y, position.z))->type = EMPTY;
+    recalculate_chunk_model();
 }
 
 // This is separated out because it's possible to create chunks in the existing chunk buffer
@@ -237,7 +226,7 @@ CHUNK* make_chunk(POINT position)
     #endif
     for(unsigned int i = 0; i < CHUNK_SIZE; i++)
     {
-        for(unsigned int j = 0; j < 30; j++)
+        for(unsigned int j = 0; j < CHUNK_MAX_HEIGHT; j++)
         {
             for(unsigned int k = 0; k < CHUNK_SIZE; k++)
             {
@@ -245,7 +234,7 @@ CHUNK* make_chunk(POINT position)
             }
         }
     }
-    calculate_chunk_model();
+    recalculate_chunk_model();
     #ifdef DEBUG
     QueryPerformanceCounter(&chunk_gen_end_time);
     double genTime = ((double)(chunk_gen_end_time.QuadPart - chunk_gen_start_time.QuadPart) / frequency.QuadPart);

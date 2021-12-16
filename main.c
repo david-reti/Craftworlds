@@ -12,7 +12,7 @@ typedef struct SETTINGS
 {
     float fov, look_sensitivity;
     unsigned int window_width, window_height;
-    bool invert_y_axis, show_fps;
+    bool invert_y_axis, show_fps, render_wireframe;
 } SETTINGS;
 
 void resize_renderer(SETTINGS* settings, CAMERA* camera)
@@ -20,6 +20,14 @@ void resize_renderer(SETTINGS* settings, CAMERA* camera)
     glViewport(0, 0, settings->window_width, settings->window_height);
     camera->projection = perspective_projection((float)settings->window_width / settings->window_height, settings->fov, 0.1, 1000);
     if(current_shader_program) set_shader_value(PROJECTION_MATRIX, &(camera->projection));
+}
+
+void switch_render_settings(SETTINGS* settings)
+{
+    if(settings->render_wireframe)
+        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+    else
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 }
 
 int main(int argc, char** argv)
@@ -34,7 +42,8 @@ int main(int argc, char** argv)
                           .fov = 45.0, 
                           .invert_y_axis = true,
                           .look_sensitivity = 0.5f,
-                          .show_fps = true
+                          .show_fps = true,
+                          .render_wireframe = false
                         };
     bool key_pressed[256] = { 0 };
 
@@ -64,12 +73,14 @@ int main(int argc, char** argv)
     glFrontFace(GL_CW);
 
     initialise_timer();
+    switch_render_settings(&settings);
 
     /// Setting up the rendering - temporary
     // Load the vertex & fragment shaders
     unsigned int default_program = shader_program(DEFAULT_VERTEX, DEFAULT_FRAGMENT);
 
     // Make the first terrain chunk
+    apply_tileset(MAIN_TILESET);
     CHUNK* chunk = make_chunk(at(0.0f, 0.0f, 0.0f));
 
     // Create and configure the camera
