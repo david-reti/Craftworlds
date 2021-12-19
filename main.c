@@ -10,7 +10,7 @@
 
 typedef struct SETTINGS
 {
-    float fov, look_sensitivity;
+    float fov, look_sensitivity, max_render_distance;
     unsigned int window_width, window_height;
     bool invert_y_axis, show_fps, render_wireframe;
 } SETTINGS;
@@ -18,7 +18,7 @@ typedef struct SETTINGS
 void resize_renderer(SETTINGS* settings, CAMERA* camera)
 {
     glViewport(0, 0, settings->window_width, settings->window_height);
-    camera->projection = perspective_projection((float)settings->window_width / settings->window_height, settings->fov, 0.1, 1000);
+    camera->projection = perspective_projection((float)settings->window_width / settings->window_height, settings->fov, 0.1, settings->max_render_distance);
     if(current_shader_program) set_shader_value(PROJECTION_MATRIX, &(camera->projection));
 }
 
@@ -43,7 +43,8 @@ int main(int argc, char** argv)
                           .invert_y_axis = true,
                           .look_sensitivity = 0.5f,
                           .show_fps = true,
-                          .render_wireframe = false
+                          .render_wireframe = false,
+                          .max_render_distance = 500
                         };
     bool key_pressed[256] = { 0 };
 
@@ -85,11 +86,11 @@ int main(int argc, char** argv)
 
     // Create and configure the camera
     CAMERA player_camera = make_camera(PERSPECTIVE_PROJECTION, settings.window_width, settings.window_height, settings.fov);
-    POINT initial_player_position = vec3_add_vec3(top_cube(10, -10), v3(0.0f, 2.78, 0.0f));
+    POINT initial_player_position = vec3_add_vec3(top_cube(10, -10), v3(0.0f, 3.0f, 0.0f));
     resize_renderer(&settings, &player_camera);
     move_camera(&player_camera, initial_player_position);
 
-    float camera_speed = 3.0f;
+    float camera_speed = 10.0f;
     float camera_pitch_limit_bottom = 89.0f, camera_pitch_limit_top = -89.0f;
 
     /// Event Processing Loop
@@ -102,7 +103,7 @@ int main(int argc, char** argv)
 
         if(settings.show_fps)
         {
-            printf("\rfps: %lf", 1.0 / elapsed_time);
+            printf("\rfps: %.2lf", 1.0 / elapsed_time);
             fflush(stdout);
         }
 
@@ -111,9 +112,9 @@ int main(int argc, char** argv)
         while(SDL_PollEvent(&event))
         {
             if(event.type == SDL_KEYDOWN)
-                key_pressed[event.key.keysym.sym] = true;
+                key_pressed[clamp(event.key.keysym.sym, 0, 255)] = true;
             else if(event.type == SDL_KEYUP)
-                key_pressed[event.key.keysym.sym] = false;
+                key_pressed[clamp(event.key.keysym.sym, 0, 255)] = false;
             else if(event.type == SDL_QUIT)
                 running = false;
             else if(event.type == SDL_MOUSEMOTION)

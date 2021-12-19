@@ -1,7 +1,10 @@
 #version 430 core
 out vec4 fragColor;
 
+in vec2 texcoord;
+uniform sampler2D tileset;
+
 void main()
 {
-    fragColor = vec4(1.0f, 1.0f, 1.0f, 1.0f);
+    fragColor = texture(tileset, texcoord);
 }

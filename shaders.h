@@ -2,19 +2,30 @@
 #define SHADERS_H
 #include"util.h"
 
+unsigned char* stbi_load_from_file(FILE*, int*, int*, int*, int);
+void stbi_image_free(void*);
+
 // Shader Value Layout - Ensure this is the same in the shaders and that update_shader_methods reflects it
 // 1 - Model Matrix (tranformation - local -> world space)
 // 2 - View Matrix (world -> camera space)
 // 3 - Projection Matrix (camera -> clip space)
 typedef enum { DEFAULT_VERTEX, DEFAULT_FRAGMENT } SHADER_TYPE;
-typedef enum { MODEL_MATRIX = 1, VIEW_MATRIX = 2, PROJECTION_MATRIX = 3 } SHADER_VALUE;
+typedef enum { MODEL_MATRIX = 2, VIEW_MATRIX = 3, PROJECTION_MATRIX = 4 } SHADER_VALUE;
 char* shader_paths[] = {"assets/shaders/default-vertex.glsl", "assets/shaders/default-fragment.glsl"};
 unsigned int shaders[2] = { 0 };
 unsigned int current_shader_program = 0;
 
+typedef struct VERTEX
+{
+    POINT position;
+    vec2 uv;
+} VERTEX;
+
+unsigned int vertex_attrib_sizes[] = { 3, 2 };
+
 // Update methods for each data type used in the shaders. Shader_update_methods is an array containing the method to use for each value.
 void update_shader_matrix(unsigned int shader_program, SHADER_VALUE value, void* to_set) { glUniformMatrix4fv(value, 1, GL_FALSE, (const GLfloat*)((mat4*)to_set)->values); };
-void (*shader_update_methods[])(unsigned int, SHADER_VALUE, void*) = { NULL, update_shader_matrix, update_shader_matrix, update_shader_matrix };
+void (*shader_update_methods[])(unsigned int, SHADER_VALUE, void*) = { NULL, NULL, update_shader_matrix, update_shader_matrix, update_shader_matrix };
 
 typedef enum { VERTEX_POSITION = 0b10000000, VERTEX_UV = 0b01000000 } VERTEX_PROPERTY;
 
@@ -53,7 +64,7 @@ unsigned int load_shader(unsigned long type, const char* path) // Internal
     return to_return;
 }
 
-void use_shader_program(unsigned int shader_program)
+void apply_shader_program(unsigned int shader_program)
 {
     glUseProgram(shader_program);
     current_shader_program = shader_program;
@@ -77,7 +88,7 @@ unsigned int link_program(unsigned int vertex_shader, unsigned int fragment_shad
         exit_with_error("Could not link shader program", error_info);
     }
 
-    use_shader_program(to_return);
+    apply_shader_program(to_return);
     return to_return;
 }
 
@@ -100,11 +111,24 @@ void unload_shaders()
 
 void configure_vertex_properties(VERTEX_PROPERTY properties_to_use)
 {
-    // Args: Attribute to configure, num elems, type, whether to normalize, stride (between attrib in next vertex), offset(where it begins)
-    if(properties_to_use & (1 << 7))
+    unsigned long long stride = 0, offsets[8] = { 0 };
+    for(unsigned int i = 0; i < 2; i++)
     {
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(GL_FLOAT), 0);
-        glEnableVertexAttribArray(0);
+        if(properties_to_use & (1 << (7 - i)))
+        {
+            stride += vertex_attrib_sizes[i] * sizeof(GLfloat);
+            if(i > 0) offsets[i] = vertex_attrib_sizes[i - 1] * sizeof(GLfloat);
+        }
+    }
+
+    for(unsigned int i = 0; i < 2; i++)
+    {
+        if(properties_to_use & (1 << (7 - i)))
+        {
+            // Args: Attribute to configure, num elems, type, whether to normalize, stride (between attrib in next vertex), offset(where it begins)
+            glVertexAttribPointer(i, vertex_attrib_sizes[i], GL_FLOAT, GL_FALSE, stride, (void*)(offsets[i]));
+            glEnableVertexAttribArray(i);
+        }
     }
 }
 

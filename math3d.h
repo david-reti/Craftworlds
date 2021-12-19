@@ -8,6 +8,11 @@ float rad2deg(float radians) { return radians * (180 / PI); }
 
 /// Vectors
 // Vector - a direction and strength (magnitude)
+typedef struct vec2
+{
+    float x, y;
+} vec2;
+
 typedef struct vec3
 {
     float x, y, z;
@@ -19,6 +24,11 @@ typedef struct vec4
 {
     float x, y, z, w;
 } vec4;
+
+vec2 v2(float x, float y)
+{
+    vec2 to_return = { .x = x, .y = y };
+}
 
 vec3 v3(float x, float y, float z)
 {
@@ -32,6 +42,27 @@ vec4 v4(float x, float y, float z, float w)
 {
     vec4 to_return = { .x = x, .y = y, .z = z, .w = w };
     return to_return;
+}
+
+vec2 vec2_add_scalar(vec2 vector, float toadd)
+{
+    vector.x += toadd;
+    vector.y += toadd;
+    return vector;
+}
+
+vec2 vec2_add_vec2(vec2 vector, vec2 toadd)
+{
+    vector.x += toadd.x;
+    vector.y += toadd.y;
+    return vector;
+}
+
+vec2 vec2_divide_scalar(vec2 vector, float todivide)
+{
+    vector.x /= todivide;
+    vector.y /= todivide;
+    return vector;
 }
 
 vec3 vec3_add_scalar(vec3 vector, float toadd)
@@ -63,6 +94,14 @@ vec3 vec3_divide_scalar(vec3 vector, float todiv)
     vector.x /= todiv;
     vector.y /= todiv;
     vector.z /= todiv;
+    return vector;
+}
+
+vec3 vec3_scale(vec3 vector, vec3 tomul)
+{
+    vector.x *= tomul.x;
+    vector.y *= tomul.y;
+    vector.z *= tomul.z;
     return vector;
 }
 
