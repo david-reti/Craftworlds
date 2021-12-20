@@ -16,6 +16,8 @@
 #define CHUNK_MAX_HEIGHT 256 // The maximum height of chunks, in number of blocks
 #define CHUNK_INITIAL_ALLOC_BLOCKS 256 // The number of blocks to allocate vertex & index space for when a chunk is created. Increasing this reduces the number of allocations, but uses more memory
 
+#define CHUNK_INDEX_TEXTURE_SIZE 2048 // The size of the texture used to store the indices which specify the texture to use for each cube
+
 typedef enum { CUBE_FACE_FRONT = 0b00000001,  CUBE_FACE_BACK   = 0b00000010, 
                CUBE_FACE_LEFT  = 0b00000100,  CUBE_FACE_RIGHT  = 0b00001000, 
                CUBE_FACE_TOP   = 0b00010000,  CUBE_FACE_BOTTOM = 0b00100000, 
@@ -34,8 +36,9 @@ typedef struct CHUNK
     mat4 tranform;
     POINT position;
     VERTEX* vertices;
-    unsigned int vertex_array_object, vertex_buffer, index_buffer, *indices;
+    unsigned int vertex_array_object, vertex_buffer, index_buffer, *indices, chunk_index_texture;
     unsigned long num_vertices, num_indices, vertex_capacity, index_capacity;
+    unsigned char* index_texture_data;
     CUBE* cubes;
     CHUNK_FILL_STATE fill_state[CHUNK_MAX_HEIGHT];
 } CHUNK;
@@ -106,10 +109,11 @@ void apply_tileset(TILESET_TYPE to_apply)
         glBindTexture(GL_TEXTURE_2D, tilesets[to_apply]);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
 
         // Args: texture to work with, mipmap level, format to store the texture (RGB), width of texture, height of texture, legacy (ignore), texture format, data type, data
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, image_width, image_height, 0, GL_RGB, GL_UNSIGNED_BYTE, image_data);
-        glGenerateMipmap(GL_TEXTURE_2D);
+        // glGenerateMipmap(GL_TEXTURE_2D);
 
         stbi_image_free(image_data);
     }
@@ -122,7 +126,14 @@ VERTEX cube_vertex(unsigned char position_index, unsigned char face_index, POINT
 { 
     VERTEX to_return;
     to_return.position = vec3_add_vec3(vec3_scale(cube_vertex_positions[position_index], size), place_at);
-    to_return.uv = vec2_divide_scalar(cube_texcoords[face_texcoords[face_index][position_index]], TILESET_SIZE / 2.0);
+
+    vec2 face_uv_scale;
+    CUBE_FACES face = 1 << face_index;
+    if(face == CUBE_FACE_FRONT || face == CUBE_FACE_BACK) face_uv_scale = v2(size.x, size.y);
+    else if(face == CUBE_FACE_LEFT || face == CUBE_FACE_RIGHT) face_uv_scale = v2(size.z, size.y);
+    else if (face == CUBE_FACE_TOP || face == CUBE_FACE_BOTTOM) face_uv_scale = v2(size.x, size.z);
+
+    to_return.uv = vec2_scale_vec2(cube_texcoords[face_texcoords[face_index][position_index]], face_uv_scale);
     return to_return;
 }
 
@@ -282,6 +293,7 @@ CHUNK* allocate_chunk_memory()
     to_return->vertices = calloc(to_return->vertex_capacity, sizeof(VERTEX));
     to_return->indices = calloc(to_return->index_capacity, sizeof(unsigned int));
     to_return->cubes = calloc(CHUNK_SIZE * CHUNK_MAX_HEIGHT * CHUNK_SIZE, sizeof(CUBE));
+    to_return->index_texture_data = calloc(CHUNK_INDEX_TEXTURE_SIZE * CHUNK_INDEX_TEXTURE_SIZE, 1);
     return to_return;
 }
 
@@ -322,6 +334,14 @@ CHUNK* make_chunk(POINT position)
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, to_return->index_buffer);
     glBufferData(GL_ARRAY_BUFFER, sizeof(VERTEX) * to_return->num_vertices, to_return->vertices, GL_STATIC_DRAW);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(unsigned int) * to_return->num_indices, to_return->indices, GL_STATIC_DRAW);
+
+    // Generate the texture index, then load the indices of all the vertices into it
+    glGenTextures(1, &(current_chunk->chunk_index_texture));
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, current_chunk->chunk_index_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RG8UI, CHUNK_INDEX_TEXTURE_SIZE, CHUNK_INDEX_TEXTURE_SIZE, 0, GL_RG8UI, GL_UNSIGNED_INT, current_chunk->index_texture_data);
+
     configure_vertex_properties(VERTEX_POSITION | VERTEX_UV);
     return to_return;
 }
@@ -335,6 +355,7 @@ void render_chunk(CHUNK* to_render)
 
 void unload_chunk(CHUNK* to_free)
 {
+    free(to_free->index_texture_data);
     free(to_free->cubes);
     free(to_free->vertices);
     free(to_free->indices);

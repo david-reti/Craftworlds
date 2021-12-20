@@ -28,6 +28,7 @@ typedef struct vec4
 vec2 v2(float x, float y)
 {
     vec2 to_return = { .x = x, .y = y };
+    return to_return;
 }
 
 vec3 v3(float x, float y, float z)
@@ -55,6 +56,20 @@ vec2 vec2_add_vec2(vec2 vector, vec2 toadd)
 {
     vector.x += toadd.x;
     vector.y += toadd.y;
+    return vector;
+}
+
+vec2 vec2_scale_vec2(vec2 vector, vec2 toscale)
+{
+    vector.x *= toscale.x;
+    vector.y *= toscale.y;
+    return vector;
+}
+
+vec2 vec2_multiply_scalar(vec2 vector, float tomul)
+{
+    vector.x *= tomul;
+    vector.y *= tomul;
     return vector;
 }
 

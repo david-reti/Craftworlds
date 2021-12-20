@@ -1,0 +1,2 @@
+Texture 0 - The current tileset, consists of a set of texture (16 x 16 by default) to be applied
+Texture 1 - Chunk index texture, each pixel consists of two unsigned bytes, which correspond to the x and y offset of a given block in the currently applied tileset. Each block will have one pixel
