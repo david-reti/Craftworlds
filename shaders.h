@@ -1,6 +1,7 @@
 #ifndef SHADERS_H
 #define SHADERS_H
 #include"util.h"
+#include"math3d.h"
 
 unsigned char* stbi_load_from_file(FILE*, int*, int*, int*, int);
 void stbi_image_free(void*);
@@ -9,47 +10,40 @@ void stbi_image_free(void*);
 // 1 - Model Matrix (tranformation - local -> world space)
 // 2 - View Matrix (world -> camera space)
 // 3 - Projection Matrix (camera -> clip space)
-typedef enum { DEFAULT_VERTEX, DEFAULT_FRAGMENT } SHADER_TYPE;
+#define NUM_SHADERS 2
+typedef enum { DEFAULT_VERTEX, DEFAULT_FRAGMENT } SHADER;
 typedef enum { MODEL_MATRIX = 2, VIEW_MATRIX = 3, PROJECTION_MATRIX = 4 } SHADER_VALUE;
-char* shader_paths[] = {"assets/shaders/default-vertex.glsl", "assets/shaders/default-fragment.glsl"};
+char* shader_names[] = {"default-vertex", "default-fragment"};
 unsigned int shaders[2] = { 0 };
 unsigned int current_shader_program = 0;
 
+extern char _binary_build_shaders_txt_start[];
+extern char _binary_build_shaders_txt_end[];
+extern char _binary_build_shaders_txt_length[];
+
 typedef struct VERTEX
 {
-    POINT position;
+    vec3 position;
     vec2 uv;
 } VERTEX;
 
 unsigned int vertex_attrib_sizes[] = { 3, 2 };
+typedef enum { VERTEX_POSITION = 0b10000000, VERTEX_UV = 0b01000000 } VERTEX_PROPERTY;
 
+#ifndef ONLY_INCLUDE_DEFINITIONS
 // Update methods for each data type used in the shaders. Shader_update_methods is an array containing the method to use for each value.
 void update_shader_matrix(unsigned int shader_program, SHADER_VALUE value, void* to_set) { glUniformMatrix4fv(value, 1, GL_FALSE, (const GLfloat*)((mat4*)to_set)->values); };
 void (*shader_update_methods[])(unsigned int, SHADER_VALUE, void*) = { NULL, NULL, update_shader_matrix, update_shader_matrix, update_shader_matrix };
 
-typedef enum { VERTEX_POSITION = 0b10000000, VERTEX_UV = 0b01000000 } VERTEX_PROPERTY;
-
-unsigned int load_shader(unsigned long type, const char* path) // Internal
+unsigned int load_shader(unsigned long type_of_shader, SHADER shader_to_load) // Internal
 {
-    size_t source_length = 0;
-    FILE* shader_source_file = fopen(path, "r");
-    if(!shader_source_file)
-        exit_with_error("Could not open shader source file for compiling", path);
-
-    // Load the source from the shader file
-    fseek(shader_source_file, 0, SEEK_END);
-    source_length = ftell(shader_source_file);
-    fseek(shader_source_file, 0, SEEK_SET);
-
-    char* source = calloc(source_length + 1, 1);
-    fread(source, 1, source_length, shader_source_file);
-    fclose(shader_source_file);
+    unsigned long shader_source_offset = *(((unsigned long*)_binary_build_shaders_txt_start) + shader_to_load);
 
     // Create & compile the shader
-    unsigned int to_return = glCreateShader(type);
-    glShaderSource(to_return, 1, (const char**)&source, NULL);
+    unsigned int to_return = glCreateShader(type_of_shader);
+    const char* shader_source = &(_binary_build_shaders_txt_start[shader_source_offset]);
+    glShaderSource(to_return, 1, (const char* const*)&shader_source, NULL);
     glCompileShader(to_return);
-    free(source);
 
     // Check for errors, and print them if there are any
     int success;
@@ -92,12 +86,12 @@ unsigned int link_program(unsigned int vertex_shader, unsigned int fragment_shad
     return to_return;
 }
 
-unsigned int shader_program(SHADER_TYPE vertex, SHADER_TYPE fragment)
+unsigned int shader_program(SHADER vertex, SHADER fragment)
 {
     if(!shaders[vertex])
-        shaders[vertex] = load_shader(GL_VERTEX_SHADER, shader_paths[vertex]);
+        shaders[vertex] = load_shader(GL_VERTEX_SHADER, vertex);
     if(!shaders[fragment])
-        shaders[fragment] = load_shader(GL_FRAGMENT_SHADER, shader_paths[fragment]);
+        shaders[fragment] = load_shader(GL_FRAGMENT_SHADER, fragment);
     return link_program(shaders[vertex], shaders[fragment]);
 }
 
@@ -131,5 +125,5 @@ void configure_vertex_properties(VERTEX_PROPERTY properties_to_use)
         }
     }
 }
-
+#endif
 #endif

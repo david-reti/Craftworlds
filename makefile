@@ -1,11 +1,37 @@
-all: glad.o stb_image.o
-	gcc main.c glad.o stb_image.o -ISDL2-2.0.16/x86_64-w64-mingw32/include -Iglad/include -LSDL2-2.0.16/x86_64-w64-mingw32/lib -lmingw32 -lopengl32 -lSDL2main -lSDL2 -O3 -DDEBUG -o Craftworlds  
+preprocess=preprocess.exe
+include_dirs=-ISDL2-2.0.16/x86_64-w64-mingw32/include -Iglad/include
+library_dirs=-LSDL2-2.0.16/x86_64-w64-mingw32/lib
+libraries_to_link=-lopengl32
+sdl_static_windows_libraries=-lmingw32 -lSDL2main -lSDL2 -mwindows -Wl,--dynamicbase -Wl,--nxcompat -Wl,--high-entropy-va -lm -ldinput8 -ldxguid -ldxerr8 -luser32 -lgdi32 -lwinmm -limm32 -lole32 -loleaut32 -lshell32 -lsetupapi -lversion -luuid
+optimisation_level=-Ofast
+object_files=build/glad.o build/stb_image.o build/block.images.o build/shaders.o
 
-glad.o:
-	gcc glad/src/glad.c -Iglad/include -O3 -c
+all: $(object_files)
+	gcc main.c $(object_files) $(include_dirs) $(library_dirs) -static $(libraries_to_link) $(sdl_static_windows_libraries) $(optimisation_level) -DDEBUG -o build/Craftworlds
 
-stb_image.o:
-	gcc stb_image.c -O3 -c -o stb_image.o
+build/glad.o:
+	mkdir -p build
+	gcc glad/src/glad.c -Iglad/include $(optimisation_level) -c -o build/glad.o
+
+build/stb_image.o:
+	mkdir -p build
+	gcc stb_image.c $(optimisation_level) -c -o build/stb_image.o
+
+build/block.images.o: $(preprocess) $(wildcard assets/textures/blocks/*.png)
+	$(preprocess) --images
+	ld -r -b binary -o build/block.images.o build/block.images
+	rm -f build/block.images
+
+build/shaders.o: $(preprocess) $(wildcard assets/shaders/*.glsl)
+	$(preprocess) --shaders
+	ld -r -b binary -o build/shaders.o build/shaders.txt
+	rm -f build/shaders.txt
+
+$(preprocess): build/stb_image.o preprocess.c
+	gcc preprocess.c build/stb_image.o $(include_dirs) $(optimisation_level) -o preprocess
+
+run: all
+	build/Craftworlds.exe 2>craftworlds_errors.log
 
 clean:
-	rm -f Craftworlds *.o
+	rm -rf build

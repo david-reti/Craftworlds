@@ -1,4 +1,6 @@
 .vscode/
-Craftworlds.exe
+build/
 *.o
 *.dll
+preprocess.exe
+*.log

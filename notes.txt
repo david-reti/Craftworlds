@@ -1,2 +1,9 @@
-Texture 0 - The current tileset, consists of a set of texture (16 x 16 by default) to be applied
-Texture 1 - Chunk index texture, each pixel consists of two unsigned bytes, which correspond to the x and y offset of a given block in the currently applied tileset. Each block will have one pixel
+Texture 0 - An array texture where each texture is of a particular size (default 16 x 16), the ID of the block is used to index into it
+Texture 1 - Chunk index texture, each pixel consists of one unsigned byte, which corresponds to the ID of the texture from the texture array to use
+
+The block textures are compiled into the software. There is a prededined symbol (the array of chars starting with the underscore) corresponding the the textures in memory.
+The textures are preprocessed into one block of raw data, one texture after another. This can then be loaded with a single driver call.
+The name of the symbols to access data can be found by running objdump -f on the generated object file
+For static linking SDL, the libraries to link can be found by running SDL_CONFIG with the --static option
+
+Note: In order to tell

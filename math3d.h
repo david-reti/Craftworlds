@@ -18,8 +18,6 @@ typedef struct vec3
     float x, y, z;
 } vec3;
 
-typedef vec3 POINT;
-
 typedef struct vec4
 {
     float x, y, z, w;
@@ -436,24 +434,23 @@ mat4 mat4_rotate_axis(vec3 axis, float radians)
 // Note about transformations: since the last matrix is applied to the vector first, read them from right to left
 // The recommended order is to first scale, then rotate and lastly translate
 
-
-mat4 mat4_orthographic_projection(float aspect_ratio, float near, float far)
+mat4 mat4_orthographic_projection(float aspect_ratio, float near_limit, float far_limit)
 {
     mat4 to_return = m4();
     float right = aspect_ratio, left = -aspect_ratio, bottom = -1, top = 1;
     to_return.values[0][0] = 1.0 / aspect_ratio;
-    to_return.values[2][2] = -2.0 / (far - near);
-    to_return.values[3][2] = -((far + near) / (far - near));
+    to_return.values[2][2] = -2.0 / (far_limit - near_limit);
+    to_return.values[3][2] = -((far_limit + near_limit) / (far_limit - near_limit));
     return to_return;
 }
 
-mat4 mat4_perspective_projection(float aspect_ratio, float fov, float near, float far)
+mat4 mat4_perspective_projection(float aspect_ratio, float fov, float near_limit, float far_limit)
 {
     mat4 to_return = m4();
     to_return.values[0][0] = 1.0 / (aspect_ratio * tan(fov / 2));
     to_return.values[1][1] = 1.0 / tan(fov / 2);
-    to_return.values[2][2] = -((far + near) / (far - near));
-    to_return.values[3][2] = -((2 * near * far) / (far - near));
+    to_return.values[2][2] = -((far_limit + near_limit) / (far_limit - near_limit));
+    to_return.values[3][2] = -((2 * near_limit * far_limit) / (far_limit - near_limit));
     to_return.values[2][3] = -1;
     return to_return;
 }

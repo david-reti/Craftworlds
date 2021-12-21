@@ -3,8 +3,8 @@
 #include<glad/glad.h>
 #include<SDL2/SDL_opengl.h>
 
+#include"util.h"
 #include"world.h"
-#include"timer.h"
 #include"camera.h"
 #include"shaders.h"
 
@@ -48,6 +48,10 @@ int main(int argc, char** argv)
                         };
     bool key_pressed[256] = { 0 };
 
+    #ifdef DEBUG
+    open_console_window();
+    #endif
+
     if(failed(SDL_Init(SDL_INIT_AUDIO | SDL_INIT_VIDEO | SDL_INIT_TIMER)))
         exit_with_error("Could not initialize SDL", SDL_GetError());
 
@@ -81,12 +85,12 @@ int main(int argc, char** argv)
     unsigned int default_program = shader_program(DEFAULT_VERTEX, DEFAULT_FRAGMENT);
 
     // Make the first terrain chunk
-    apply_tileset(MAIN_TILESET);
+    load_block_textures();
     CHUNK* chunk = make_chunk(at(0.0f, 0.0f, 0.0f));
 
     // Create and configure the camera
     CAMERA player_camera = make_camera(PERSPECTIVE_PROJECTION, settings.window_width, settings.window_height, settings.fov);
-    POINT initial_player_position = vec3_add_vec3(top_cube(10, -10), v3(0.0f, 3.0f, 0.0f));
+    vec3 initial_player_position = vec3_add_vec3(top_cube(10, -10), v3(0.0f, 3.0f, 0.0f));
     resize_renderer(&settings, &player_camera);
     move_camera(&player_camera, initial_player_position);
 

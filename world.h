@@ -6,11 +6,8 @@
 
 #include"util.h"
 #include"math3d.h"
+#include"blocks.h"
 #include"shaders.h"
-
-#ifdef DEBUG
-#include"timer.h"
-#endif
 
 #define CHUNK_SIZE 32 // The maximum width and depth of chunks, in number of blocks
 #define CHUNK_MAX_HEIGHT 256 // The maximum height of chunks, in number of blocks
@@ -22,7 +19,6 @@ typedef enum { CUBE_FACE_FRONT = 0b00000001,  CUBE_FACE_BACK   = 0b00000010,
                CUBE_FACE_LEFT  = 0b00000100,  CUBE_FACE_RIGHT  = 0b00001000, 
                CUBE_FACE_TOP   = 0b00010000,  CUBE_FACE_BOTTOM = 0b00100000, 
                CUBE_FACE_ALL   = 0b00111111 } CUBE_FACES;
-typedef enum { EMPTY, SOIL } BLOCK_TYPE;
 typedef enum { CHUNK_EMPTY, CHUNK_PARTIALLY_FULL, CHUNK_FULL } CHUNK_FILL_STATE;
 
 typedef struct CUBE
@@ -34,7 +30,7 @@ typedef struct CUBE
 typedef struct CHUNK
 {
     mat4 tranform;
-    POINT position;
+    vec3 position;
     VERTEX* vertices;
     unsigned int vertex_array_object, vertex_buffer, index_buffer, *indices, chunk_index_texture;
     unsigned long num_vertices, num_indices, vertex_capacity, index_capacity;
@@ -46,7 +42,7 @@ typedef struct CHUNK
 CHUNK* current_chunk = NULL;
 CUBE empty_cube = { 0 };
 
-POINT cube_vertex_positions[] = {
+vec3 cube_vertex_positions[] = {
 //  Front
     0.0f, 0.0f, 0.0f,
     0.0f, 1.0f, 0.0f,
@@ -74,9 +70,6 @@ unsigned int cube_face_top[]    = { 1, 5, 3, 3, 5, 7 };
 unsigned int cube_face_bottom[] = { 0, 2, 6, 6, 4, 0 };
 unsigned int* faces[] = { cube_face_front, cube_face_back, cube_face_left, cube_face_right, cube_face_top, cube_face_bottom };
 
-#define TILESET_SIZE 64 // Number of tiles in the texture - width and height
-#define TILE_TEXTURE_SIZE 16 // Width and height of each texture, in pixels 
-
 // For each of the vertices above, which texcoord to use (by index, from the list above) when rendering the given face
 unsigned int front_face_coords[]   = { 0, 1, 2, 3, 0, 0, 0, 0 };
 unsigned int back_face_coords[]    = { 0, 0, 0, 0, 0, 1, 2, 3 };
@@ -88,41 +81,26 @@ unsigned int* face_texcoords[] = { front_face_coords, back_face_coords, left_fac
 
 vec2 block_texcoords[] = {{.x = 0.0f, .y = 0.0f }};
 
-#define NUM_TILESETS 1
-const char* tileset_paths[] = { "assets/tilesets/main.png" };
-typedef enum { MAIN_TILESET } TILESET_TYPE;
-unsigned int tilesets[NUM_TILESETS] = { 0 }, current_tileset = 0;
+unsigned int block_textures;
 
-void apply_tileset(TILESET_TYPE to_apply)
+void load_block_textures()
 {
-    if(!tilesets[to_apply])
-    {
-        int image_width, image_height, image_components;
-        FILE* image_file = fopen(tileset_paths[to_apply], "rb");
-        if(!image_file) exit_with_error("Could not load main tileset from file", tileset_paths[to_apply]);
-        unsigned char* image_data = stbi_load_from_file(image_file, &image_width, &image_height, &image_components, 0);
-        if(!image_data) exit_with_error("Could not parse tileset (PNG) from file", tileset_paths[to_apply]);
-        fclose(image_file);
+    glGenTextures(1, &block_textures);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, block_textures);
 
-        glGenTextures(1, tilesets + to_apply);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, tilesets[to_apply]);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+    // Use nearest filtering, but linear for mipmap filtering which I find minimizes artifacting
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL, NUM_BLOCK_MIPMAP_LEVELS);
 
-        // Args: texture to work with, mipmap level, format to store the texture (RGB), width of texture, height of texture, legacy (ignore), texture format, data type, data
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, image_width, image_height, 0, GL_RGB, GL_UNSIGNED_BYTE, image_data);
-        // glGenerateMipmap(GL_TEXTURE_2D);
+    // Load in the image data which was built into the executable
+    glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA, BLOCK_IMAGE_WIDTH, BLOCK_IMAGE_HEIGHT, NUM_BLOCK_TYPES, 0, GL_RGBA, GL_UNSIGNED_BYTE, _binary_build_block_images_start);
 
-        stbi_image_free(image_data);
-    }
-
-    glBindTexture(GL_TEXTURE_2D, tilesets[to_apply]);
-    current_tileset = tilesets[to_apply];
+    glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
 }
 
-VERTEX cube_vertex(unsigned char position_index, unsigned char face_index, POINT place_at, vec3 size, BLOCK_TYPE block_type) 
+VERTEX cube_vertex(unsigned char position_index, unsigned char face_index, vec3 place_at, vec3 size, BLOCK_TYPE block_type) 
 { 
     VERTEX to_return;
     to_return.position = vec3_add_vec3(vec3_scale(cube_vertex_positions[position_index], size), place_at);
@@ -137,7 +115,7 @@ VERTEX cube_vertex(unsigned char position_index, unsigned char face_index, POINT
     return to_return;
 }
 
-void cube_faces(CUBE* cube_to_add, POINT position, vec3 size, CUBE_FACES faces_to_add)
+void cube_faces(CUBE* cube_to_add, vec3 position, vec3 size, CUBE_FACES faces_to_add)
 {
     if(current_chunk->num_vertices + 8 > current_chunk->vertex_capacity)
     {
@@ -149,31 +127,7 @@ void cube_faces(CUBE* cube_to_add, POINT position, vec3 size, CUBE_FACES faces_t
     cube_to_add->vertex_location = current_chunk->num_vertices;
     cube_to_add->index_location = current_chunk->num_indices;
 
-    // Copy only the required vertices into the chunk's vertex list
-    // char vertices_to_copy = 0;
-    // if(faces_to_add & 1)        // Front
-    //     vertices_to_copy |= 0b11110000;
-    // if(faces_to_add & (1 << 1)) // Back
-    //     vertices_to_copy |= 0b00001111;
-    // if(faces_to_add & (1 << 2)) // Left
-    //     vertices_to_copy |= 0b11001100;
-    // if(faces_to_add & (1 << 3)) // Right
-    //     vertices_to_copy |= 0b00110011;
-    // if(faces_to_add & (1 << 4)) // Top
-    //     vertices_to_copy |= 0b01010101;
-    // if(faces_to_add & (1 << 5)) // Bottom
-    //     vertices_to_copy |= 0b10101010;
-
     unsigned int num_vertices_added = 0, num_indices_added = 0, indices_added[8] = { 0 };
-    // for(char i = 7; i >= 0; i--)
-    // {
-    //     if(vertices_to_copy & (1 << i))
-    //     {
-    //             current_chunk->vertices[current_chunk->num_vertices + num_vertices_added] = cube_vertex(index_loc[j], 0, position, size, cube_to_add->type);
-    //             indices_added[7 - i] = current_chunk->num_vertices + num_vertices_added++;
-    //     }
-    // }
-
     unsigned int next_index, *index_loc;
     for(unsigned char i = 0; i < 6; i++)
     {
@@ -203,7 +157,7 @@ void cube_faces(CUBE* cube_to_add, POINT position, vec3 size, CUBE_FACES faces_t
     cube_to_add->num_indices = num_indices_added;
 }
 
-CUBE* get_cube(POINT point)
+CUBE* get_cube(vec3 point)
 {
     long long x = (long long)point.x, y = (long long)point.y, z = (long long)point.z;
     if(x < 0 || y < 0 || x >= CHUNK_SIZE || y >= CHUNK_MAX_HEIGHT || z > 0 || abs(z) >= CHUNK_SIZE)
@@ -211,7 +165,7 @@ CUBE* get_cube(POINT point)
     return current_chunk->cubes + (x + (abs(z) * CHUNK_SIZE) + (y * CHUNK_SIZE * CHUNK_SIZE));
 }
 
-POINT top_cube(float x, float z)
+vec3 top_cube(float x, float z)
 {
     float y = CHUNK_MAX_HEIGHT;
     CUBE* on_top = get_cube(at(x, y, z));
@@ -225,7 +179,7 @@ POINT top_cube(float x, float z)
 // Generates the vertices and indices for a chunk based on its cube array.
 void recalculate_chunk_model()
 {
-    POINT block_position;
+    vec3 block_position;
     unsigned int i = 1, range_min = 0, range_max = CHUNK_MAX_HEIGHT;
     while(range_max - range_min > 1 && i < CHUNK_MAX_HEIGHT)
     {
@@ -271,14 +225,14 @@ void recalculate_chunk_model()
     // }
 }
 
-void place_block(BLOCK_TYPE type, POINT position)
+void place_block(BLOCK_TYPE type, vec3 position)
 {
     // Set the locations of the current cube's vertices and indices in the chunk's buffers
     get_cube(at(position.x, position.y, position.z))->type = type;
     recalculate_chunk_model();
 }
 
-void remove_block(POINT position)
+void remove_block(vec3 position)
 {
     get_cube(at(position.x, position.y, position.z))->type = EMPTY;
     recalculate_chunk_model();
@@ -297,7 +251,7 @@ CHUNK* allocate_chunk_memory()
     return to_return;
 }
 
-CHUNK* make_chunk(POINT position)
+CHUNK* make_chunk(vec3 position)
 {
     CHUNK* to_return = allocate_chunk_memory();
     to_return->tranform = translate(position);
@@ -349,6 +303,8 @@ CHUNK* make_chunk(POINT position)
 void render_chunk(CHUNK* to_render)
 {
     glBindVertexArray(to_render->vertex_array_object);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, block_textures);
     set_shader_value(MODEL_MATRIX, &(to_render->tranform));
     glDrawElements(GL_TRIANGLES, to_render->num_indices, GL_UNSIGNED_INT, 0);
 }
