@@ -24,10 +24,8 @@ void resize_renderer(SETTINGS* settings, CAMERA* camera)
 
 void switch_render_settings(SETTINGS* settings)
 {
-    if(settings->render_wireframe)
-        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-    else
-        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    if(settings->render_wireframe) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+    else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 }
 
 int main(int argc, char** argv)
@@ -82,7 +80,9 @@ int main(int argc, char** argv)
 
     /// Setting up the rendering - temporary
     // Load the vertex & fragment shaders
-    unsigned int default_program = shader_program(DEFAULT_VERTEX, DEFAULT_FRAGMENT);
+    unsigned int blocks_shader_program = shader_program(BLOCK_VERTEX_SHADER, BLOCK_FRAGMENT_SHADER);
+    unsigned int debug_shader_program = shader_program(BLOCK_VERTEX_SHADER, DEBUG_FRAGMENT_SHADER);
+    apply_shader_program(blocks_shader_program);
 
     // Make the first terrain chunk
     load_block_textures();
@@ -147,7 +147,13 @@ int main(int argc, char** argv)
             move_camera(&player_camera, v3(-camera_speed * elapsed_time, 0.0f, 0.0f));
         if(key_pressed[SDLK_d])
             move_camera(&player_camera, v3(camera_speed * elapsed_time, 0.0f, 0.0f));
-        
+        if(key_pressed[SDLK_q])
+        {
+            settings.render_wireframe = true;
+            apply_shader_program(debug_shader_program);
+            switch_render_settings(&settings);
+        }
+
         set_shader_value(VIEW_MATRIX, &(player_camera.view));
 
         /// Render

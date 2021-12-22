@@ -30,7 +30,7 @@ int main(int argc, char** argv)
             fclose(asset_file);
 
             // memcpy(image_data + (BLOCK_IMAGE_SIZE * (i - 1)), data, BLOCK_IMAGE_SIZE);
-            memcpy(image_data, data, BLOCK_IMAGE_SIZE);
+            memcpy(image_data + (BLOCK_IMAGE_SIZE * (i - 1)), data, BLOCK_IMAGE_SIZE);
             stbi_image_free(data);
         }
 

@@ -12,7 +12,6 @@
 #define CHUNK_SIZE 32 // The maximum width and depth of chunks, in number of blocks
 #define CHUNK_MAX_HEIGHT 256 // The maximum height of chunks, in number of blocks
 #define CHUNK_INITIAL_ALLOC_BLOCKS 256 // The number of blocks to allocate vertex & index space for when a chunk is created. Increasing this reduces the number of allocations, but uses more memory
-
 #define CHUNK_INDEX_TEXTURE_SIZE 2048 // The size of the texture used to store the indices which specify the texture to use for each cube
 
 typedef enum { CUBE_FACE_FRONT = 0b00000001,  CUBE_FACE_BACK   = 0b00000010, 
@@ -31,10 +30,10 @@ typedef struct CHUNK
 {
     mat4 tranform;
     vec3 position;
-    VERTEX* vertices;
-    unsigned int vertex_array_object, vertex_buffer, index_buffer, *indices, chunk_index_texture;
+    BLOCK_VERTEX* vertices;
+    unsigned int vertex_array_object, vertex_buffer, index_buffer, *indices, index_texture, index_texture_offset_x, index_texture_offset_y;
     unsigned long num_vertices, num_indices, vertex_capacity, index_capacity;
-    unsigned char* index_texture_data;
+    GLuint* index_texture_data;
     CUBE* cubes;
     CHUNK_FILL_STATE fill_state[CHUNK_MAX_HEIGHT];
 } CHUNK;
@@ -72,17 +71,14 @@ unsigned int* faces[] = { cube_face_front, cube_face_back, cube_face_left, cube_
 
 // For each of the vertices above, which texcoord to use (by index, from the list above) when rendering the given face
 unsigned int front_face_coords[]   = { 0, 1, 2, 3, 0, 0, 0, 0 };
-unsigned int back_face_coords[]    = { 0, 0, 0, 0, 0, 1, 2, 3 };
-unsigned int left_face_coords[]    = { 0, 1, 0, 0, 2, 3, 0, 0 };
+unsigned int back_face_coords[]    = { 0, 0, 0, 0, 2, 3, 0, 1 };
+unsigned int left_face_coords[]    = { 2, 3, 0, 0, 0, 1, 0, 0 };
 unsigned int right_face_coords[]   = { 0, 0, 0, 1, 0, 0, 2, 3 }; 
 unsigned int top_face_coords[]     = { 0, 0, 0, 2, 0, 1, 0, 3 };
-unsigned int bottom_face_coords[]  = { 0, 0, 2, 0, 1, 0, 3, 0 };
+unsigned int bottom_face_coords[]  = { 2, 0, 3, 0, 0, 0, 1, 0 };
 unsigned int* face_texcoords[] = { front_face_coords, back_face_coords, left_face_coords, right_face_coords, top_face_coords, bottom_face_coords };
 
-vec2 block_texcoords[] = {{.x = 0.0f, .y = 0.0f }};
-
 unsigned int block_textures;
-
 void load_block_textures()
 {
     glGenTextures(1, &block_textures);
@@ -100,9 +96,9 @@ void load_block_textures()
     glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
 }
 
-VERTEX cube_vertex(unsigned char position_index, unsigned char face_index, vec3 place_at, vec3 size, BLOCK_TYPE block_type) 
+BLOCK_VERTEX cube_vertex(unsigned char position_index, unsigned char face_index, vec3 place_at, vec3 size, BLOCK_TYPE block_type) 
 { 
-    VERTEX to_return;
+    BLOCK_VERTEX to_return;
     to_return.position = vec3_add_vec3(vec3_scale(cube_vertex_positions[position_index], size), place_at);
 
     vec2 face_uv_scale;
@@ -112,7 +108,16 @@ VERTEX cube_vertex(unsigned char position_index, unsigned char face_index, vec3 
     else if (face == CUBE_FACE_TOP || face == CUBE_FACE_BOTTOM) face_uv_scale = v2(size.x, size.z);
 
     to_return.uv = vec2_scale_vec2(cube_texcoords[face_texcoords[face_index][position_index]], face_uv_scale);
+    to_return.uv2 = v2(current_chunk->index_texture_offset_x, current_chunk->index_texture_offset_y);
     return to_return;
+}
+
+CUBE* get_cube(vec3 point)
+{
+    long long x = (long long)point.x, y = (long long)point.y, z = (long long)point.z;
+    if(x < 0 || y < 0 || x >= CHUNK_SIZE || y >= CHUNK_MAX_HEIGHT || z > 0 || abs(z) >= CHUNK_SIZE)
+        return &empty_cube;
+    return current_chunk->cubes + (x + (abs(z) * CHUNK_SIZE) + (y * CHUNK_SIZE * CHUNK_SIZE));
 }
 
 void cube_faces(CUBE* cube_to_add, vec3 position, vec3 size, CUBE_FACES faces_to_add)
@@ -120,18 +125,21 @@ void cube_faces(CUBE* cube_to_add, vec3 position, vec3 size, CUBE_FACES faces_to
     if(current_chunk->num_vertices + 8 > current_chunk->vertex_capacity)
     {
         // Allocate more space for vertices and indices. Since there are more indices than vertices per cube, the number of indices grows faster as well
-        current_chunk->vertices = realloc(current_chunk->vertices, (current_chunk->vertex_capacity *= 2) * sizeof(VERTEX));
+        current_chunk->vertices = realloc(current_chunk->vertices, (current_chunk->vertex_capacity *= 2) * sizeof(BLOCK_VERTEX));
         current_chunk->indices = realloc(current_chunk->indices, (current_chunk->index_capacity *= 4.5) * sizeof(unsigned int));
     }
 
     cube_to_add->vertex_location = current_chunk->num_vertices;
     cube_to_add->index_location = current_chunk->num_indices;
 
+    vec3 fill_to;
+    CUBE_FACES face_to_add;
     unsigned int num_vertices_added = 0, num_indices_added = 0, indices_added[8] = { 0 };
     unsigned int next_index, *index_loc;
     for(unsigned char i = 0; i < 6; i++)
     {
-        if(faces_to_add & (1 << i))
+        face_to_add = 1 << i;
+        if(faces_to_add & face_to_add)
         {
             // Copy the indices for the current face
             index_loc = current_chunk->indices + current_chunk->num_indices + num_indices_added;
@@ -149,20 +157,81 @@ void cube_faces(CUBE* cube_to_add, vec3 position, vec3 size, CUBE_FACES faces_to
                 index_loc[j] = indices_added[index_loc[j]];
             }
             num_indices_added += 6;
+
+            unsigned int offset_x = current_chunk->index_texture_offset_x, offset_y = current_chunk->index_texture_offset_y;
+            // Update the index texture for the face by looping through each block on the face, and updating the texture coordinate with the block texture ID
+            if(face_to_add == CUBE_FACE_FRONT || face_to_add == CUBE_FACE_BACK)
+            {
+                float zpos = position.z;
+                if(face_to_add == CUBE_FACE_BACK) zpos = position.z - size.z + 1;
+                for(float j = position.y; j < position.y + size.y; j++)
+                {
+                    for(float k = position.x; k < position.x + size.x; k++)
+                    {
+                        unsigned long index = (offset_y * CHUNK_INDEX_TEXTURE_SIZE) + offset_x++;
+                        current_chunk->index_texture_data[index] = get_cube(at(k, j, zpos))->type - 1;
+
+                        if(offset_x == current_chunk->index_texture_offset_x + size.x)
+                        {
+                            offset_x = current_chunk->index_texture_offset_x;
+                            offset_y++;
+                        }
+                    }
+                }
+
+                current_chunk->index_texture_offset_x += size.x;
+            }
+
+            if(face_to_add == CUBE_FACE_LEFT || face_to_add == CUBE_FACE_RIGHT)
+            {
+                float xpos = position.x;
+                if(face_to_add == CUBE_FACE_RIGHT) xpos = position.x + size.x - 1;
+                for(float j = position.y; j < position.y + size.y; j++)
+                {
+                    for(float k = -size.z - position.z + 1; k <= position.z; k++)
+                    {
+                        unsigned long index = (offset_y * CHUNK_INDEX_TEXTURE_SIZE) + offset_x++;
+                        current_chunk->index_texture_data[index] = get_cube(at(xpos, j, k))->type - 1;
+
+                        if(offset_x == current_chunk->index_texture_offset_x + size.z)
+                        {
+                            offset_x = current_chunk->index_texture_offset_x;
+                            offset_y++;
+                        }
+                    }
+                }
+
+                current_chunk->index_texture_offset_x += size.x;
+            }
+            
+            if(face_to_add == CUBE_FACE_TOP || face_to_add == CUBE_FACE_BOTTOM)
+            {
+                float ypos = position.y;
+                if(face_to_add == CUBE_FACE_TOP) ypos = position.y + size.y - 1;
+                for(float k = -position.z; k < position.z + size.z; k++)
+                {
+                    for(float j = position.x; j < position.x + size.x; j++)
+                    {
+                        unsigned long index = (offset_y * CHUNK_INDEX_TEXTURE_SIZE) + offset_x++;
+
+                        current_chunk->index_texture_data[index] = get_cube(at(j, ypos, -k))->type - 1;
+
+                        if(offset_x == current_chunk->index_texture_offset_x + size.x)
+                        {
+                            offset_x = current_chunk->index_texture_offset_x;
+                            offset_y++;
+                        }
+                    }
+                }
+
+                current_chunk->index_texture_offset_x += size.x;
+            }
         }
     }
 
     current_chunk->num_vertices += num_vertices_added;
     current_chunk->num_indices += num_indices_added;
     cube_to_add->num_indices = num_indices_added;
-}
-
-CUBE* get_cube(vec3 point)
-{
-    long long x = (long long)point.x, y = (long long)point.y, z = (long long)point.z;
-    if(x < 0 || y < 0 || x >= CHUNK_SIZE || y >= CHUNK_MAX_HEIGHT || z > 0 || abs(z) >= CHUNK_SIZE)
-        return &empty_cube;
-    return current_chunk->cubes + (x + (abs(z) * CHUNK_SIZE) + (y * CHUNK_SIZE * CHUNK_SIZE));
 }
 
 vec3 top_cube(float x, float z)
@@ -244,10 +313,10 @@ CHUNK* allocate_chunk_memory()
     CHUNK* to_return = calloc(1, sizeof(CHUNK));
     to_return->vertex_capacity = CHUNK_INITIAL_ALLOC_BLOCKS * 8;
     to_return->index_capacity = CHUNK_INITIAL_ALLOC_BLOCKS * 36;
-    to_return->vertices = calloc(to_return->vertex_capacity, sizeof(VERTEX));
+    to_return->vertices = calloc(to_return->vertex_capacity, sizeof(BLOCK_VERTEX));
     to_return->indices = calloc(to_return->index_capacity, sizeof(unsigned int));
     to_return->cubes = calloc(CHUNK_SIZE * CHUNK_MAX_HEIGHT * CHUNK_SIZE, sizeof(CUBE));
-    to_return->index_texture_data = calloc(CHUNK_INDEX_TEXTURE_SIZE * CHUNK_INDEX_TEXTURE_SIZE, 1);
+    to_return->index_texture_data = calloc(CHUNK_INDEX_TEXTURE_SIZE * CHUNK_INDEX_TEXTURE_SIZE, sizeof(GLuint));
     return to_return;
 }
 
@@ -271,6 +340,7 @@ CHUNK* make_chunk(vec3 position)
             }
         }
     }
+    get_cube(at(0, CHUNK_MAX_HEIGHT - 1, 0))->type = GRASS;
     current_chunk->fill_state[0] = CHUNK_FULL;
     recalculate_chunk_model();
     #ifdef DEBUG
@@ -286,25 +356,27 @@ CHUNK* make_chunk(vec3 position)
     glGenBuffers(1, &(to_return->index_buffer));
     glBindBuffer(GL_ARRAY_BUFFER, to_return->vertex_buffer);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, to_return->index_buffer);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(VERTEX) * to_return->num_vertices, to_return->vertices, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(BLOCK_VERTEX) * to_return->num_vertices, to_return->vertices, GL_STATIC_DRAW);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(unsigned int) * to_return->num_indices, to_return->indices, GL_STATIC_DRAW);
 
     // Generate the texture index, then load the indices of all the vertices into it
-    glGenTextures(1, &(current_chunk->chunk_index_texture));
+    glGenTextures(1, &(current_chunk->index_texture));
     glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, current_chunk->chunk_index_texture);
+    glBindTexture(GL_TEXTURE_2D, current_chunk->index_texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RG8UI, CHUNK_INDEX_TEXTURE_SIZE, CHUNK_INDEX_TEXTURE_SIZE, 0, GL_RG8UI, GL_UNSIGNED_INT, current_chunk->index_texture_data);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
-    configure_vertex_properties(VERTEX_POSITION | VERTEX_UV);
+    // Note to self: check the texture formats (internal & supplied)
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32UI, CHUNK_INDEX_TEXTURE_SIZE, CHUNK_INDEX_TEXTURE_SIZE, 0, GL_RED_INTEGER, GL_UNSIGNED_INT, current_chunk->index_texture_data);
+
+    configure_vertex_properties(VERTEX_POSITION | VERTEX_UV | VERTEX_UV2);
     return to_return;
 }
 
 void render_chunk(CHUNK* to_render)
 {
     glBindVertexArray(to_render->vertex_array_object);
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D_ARRAY, block_textures);
     set_shader_value(MODEL_MATRIX, &(to_render->tranform));
     glDrawElements(GL_TRIANGLES, to_render->num_indices, GL_UNSIGNED_INT, 0);
 }

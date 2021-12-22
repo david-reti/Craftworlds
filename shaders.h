@@ -10,30 +10,31 @@ void stbi_image_free(void*);
 // 1 - Model Matrix (tranformation - local -> world space)
 // 2 - View Matrix (world -> camera space)
 // 3 - Projection Matrix (camera -> clip space)
-#define NUM_SHADERS 2
-typedef enum { DEFAULT_VERTEX, DEFAULT_FRAGMENT } SHADER;
-typedef enum { MODEL_MATRIX = 2, VIEW_MATRIX = 3, PROJECTION_MATRIX = 4 } SHADER_VALUE;
-char* shader_names[] = {"default-vertex", "default-fragment"};
-unsigned int shaders[2] = { 0 };
+#define NUM_SHADERS 3
+typedef enum            { BLOCK_VERTEX_SHADER, BLOCK_FRAGMENT_SHADER, DEBUG_FRAGMENT_SHADER } SHADER;
+char* shader_names[] =  {"block-vertex",      "block-fragment",      "debug-fragment" };
+typedef enum { MODEL_MATRIX = 3, VIEW_MATRIX = 4, PROJECTION_MATRIX = 5 } SHADER_VALUE;
+unsigned int shaders[NUM_SHADERS] = { 0 };
 unsigned int current_shader_program = 0;
 
 extern char _binary_build_shaders_txt_start[];
 extern char _binary_build_shaders_txt_end[];
 extern char _binary_build_shaders_txt_length[];
 
-typedef struct VERTEX
+typedef struct BLOCK_VERTEX
 {
     vec3 position;
-    vec2 uv;
-} VERTEX;
+    vec2 uv, uv2;
+} BLOCK_VERTEX;
 
-unsigned int vertex_attrib_sizes[] = { 3, 2 };
-typedef enum { VERTEX_POSITION = 0b10000000, VERTEX_UV = 0b01000000 } VERTEX_PROPERTY;
+#define NUM_VERTEX_PROPERTIES 3
+unsigned int vertex_attrib_sizes[] = { 3, 2, 2 };
+typedef enum { VERTEX_POSITION = 0b10000000, VERTEX_UV = 0b01000000, VERTEX_UV2 = 0b00100000 } VERTEX_PROPERTY;
 
 #ifndef ONLY_INCLUDE_DEFINITIONS
 // Update methods for each data type used in the shaders. Shader_update_methods is an array containing the method to use for each value.
 void update_shader_matrix(unsigned int shader_program, SHADER_VALUE value, void* to_set) { glUniformMatrix4fv(value, 1, GL_FALSE, (const GLfloat*)((mat4*)to_set)->values); };
-void (*shader_update_methods[])(unsigned int, SHADER_VALUE, void*) = { NULL, NULL, update_shader_matrix, update_shader_matrix, update_shader_matrix };
+void (*shader_update_methods[])(unsigned int, SHADER_VALUE, void*) = { NULL, NULL, NULL, update_shader_matrix, update_shader_matrix, update_shader_matrix };
 
 unsigned int load_shader(unsigned long type_of_shader, SHADER shader_to_load) // Internal
 {
@@ -97,25 +98,21 @@ unsigned int shader_program(SHADER vertex, SHADER fragment)
 
 void set_shader_value(SHADER_VALUE value, void* to_set) { shader_update_methods[value](current_shader_program, value, to_set); }
 
-void unload_shaders()
-{
-    glDeleteShader(shaders[0]);
-    glDeleteShader(shaders[1]);
-}
+void unload_shaders() { for(unsigned int i = 0; i < NUM_SHADERS; i++) glDeleteShader(shaders[i]); }
 
 void configure_vertex_properties(VERTEX_PROPERTY properties_to_use)
 {
     unsigned long long stride = 0, offsets[8] = { 0 };
-    for(unsigned int i = 0; i < 2; i++)
+    for(unsigned int i = 0; i < NUM_VERTEX_PROPERTIES; i++)
     {
         if(properties_to_use & (1 << (7 - i)))
         {
             stride += vertex_attrib_sizes[i] * sizeof(GLfloat);
-            if(i > 0) offsets[i] = vertex_attrib_sizes[i - 1] * sizeof(GLfloat);
+            if(i > 0) offsets[i] = offsets[i - 1] + (vertex_attrib_sizes[i - 1] * sizeof(GLfloat));
         }
     }
 
-    for(unsigned int i = 0; i < 2; i++)
+    for(unsigned int i = 0; i < NUM_VERTEX_PROPERTIES; i++)
     {
         if(properties_to_use & (1 << (7 - i)))
         {
