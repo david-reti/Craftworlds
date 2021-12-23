@@ -20,23 +20,33 @@ int main(int argc, char** argv)
     {
         // Block Textures: load in all the block textures, then combine them into a single raw image, and write that out into the build directory
         int image_width, image_height, image_components;
-        unsigned char* image_data = calloc(NUM_BLOCK_TYPES * BLOCK_IMAGE_SIZE, 1);
-        for(unsigned int i = 1; i < NUM_BLOCK_TYPES; i++)
+        unsigned char* image_data = calloc((NUM_BLOCK_TEXTURES + 1) * BLOCK_IMAGE_SIZE, 1);
+        unsigned char image_flip_buffer[BLOCK_IMAGE_WIDTH * 4] = { 0 };
+        for(unsigned int i = 0; i < NUM_BLOCK_TEXTURES; i++)
         {
-            sprintf(asset_file_to_open, "assets/textures/blocks/%s.png", block_names[i]);
+            sprintf(asset_file_to_open, "assets/textures/blocks/%s.png", block_texture_names[i]);
             if((asset_file = fopen(asset_file_to_open, "rb")) == NULL) exit_with_error("Could not open image for preprocessing", asset_file_to_open);
             unsigned char* data = stbi_load_from_file(asset_file, &image_width, &image_height, &image_components, 4);
             if(!data) exit_with_error("Could not parse texture (PNG) from file", asset_file_to_open);
             fclose(asset_file);
 
-            // memcpy(image_data + (BLOCK_IMAGE_SIZE * (i - 1)), data, BLOCK_IMAGE_SIZE);
-            memcpy(image_data + (BLOCK_IMAGE_SIZE * (i - 1)), data, BLOCK_IMAGE_SIZE);
+            memcpy(image_data + (BLOCK_IMAGE_SIZE * i), data, BLOCK_IMAGE_SIZE);
+
+            // Flip the image on the Y axis - required because of the inverted coordinates in shader
+            unsigned char* image_offset = image_data + (BLOCK_IMAGE_SIZE * i);
+            for(unsigned int j = 0; j < image_height / 2; j++)
+            {
+                memcpy(image_flip_buffer, image_offset + (j * BLOCK_IMAGE_WIDTH * 4), BLOCK_IMAGE_WIDTH * 4);
+                memcpy(image_offset + (j * BLOCK_IMAGE_WIDTH * 4), image_offset + ((BLOCK_IMAGE_HEIGHT - j - 1) * BLOCK_IMAGE_WIDTH * 4), BLOCK_IMAGE_WIDTH * 4);
+                memcpy(image_offset + (BLOCK_IMAGE_HEIGHT - j - 1) * BLOCK_IMAGE_WIDTH * 4, image_flip_buffer, BLOCK_IMAGE_WIDTH * 4);
+            }
+
             stbi_image_free(data);
         }
 
         strcpy(asset_file_to_open, "build/block.images");
         if((asset_file = fopen(asset_file_to_open, "wb")) == NULL) exit_with_error("Could not open data file for writing preprocessing result", asset_file_to_open);
-        fwrite(image_data, 1, NUM_BLOCK_TYPES * BLOCK_IMAGE_SIZE, asset_file);
+        fwrite(image_data, 1, NUM_BLOCK_TEXTURES * BLOCK_IMAGE_SIZE, asset_file);
         fclose(asset_file);
         free(image_data);
     }

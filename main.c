@@ -100,6 +100,7 @@ int main(int argc, char** argv)
     /// Event Processing Loop
     bool running = true;
     double elapsed_time = 0;
+    unsigned long setting_switch_cooldown = 0;
     while(running)
     {
         /// Get Elapsed Time
@@ -147,11 +148,14 @@ int main(int argc, char** argv)
             move_camera(&player_camera, v3(-camera_speed * elapsed_time, 0.0f, 0.0f));
         if(key_pressed[SDLK_d])
             move_camera(&player_camera, v3(camera_speed * elapsed_time, 0.0f, 0.0f));
-        if(key_pressed[SDLK_q])
+        if(key_pressed[SDLK_q] && SDL_GetTicks() - setting_switch_cooldown > 400)
         {
-            settings.render_wireframe = true;
-            apply_shader_program(debug_shader_program);
+            settings.render_wireframe = !settings.render_wireframe;
+            if(settings.render_wireframe) apply_shader_program(debug_shader_program);
+            else apply_shader_program(blocks_shader_program);
             switch_render_settings(&settings);
+            resize_renderer(&settings, &player_camera);
+            setting_switch_cooldown = SDL_GetTicks();
         }
 
         set_shader_value(VIEW_MATRIX, &(player_camera.view));
