@@ -5,9 +5,10 @@ libraries_to_link=-lopengl32
 sdl_static_windows_libraries=-lmingw32 -lSDL2main -lSDL2 -mwindows -Wl,--dynamicbase -Wl,--nxcompat -Wl,--high-entropy-va -lm -ldinput8 -ldxguid -ldxerr8 -luser32 -lgdi32 -lwinmm -limm32 -lole32 -loleaut32 -lshell32 -lsetupapi -lversion -luuid
 optimisation_level=-Ofast
 object_files=build/glad.o build/stb_image.o build/block.images.o build/shaders.o
+icon_resource=build/icon.res
 
-all: $(object_files)
-	gcc main.c $(object_files) $(include_dirs) $(library_dirs) -static $(libraries_to_link) $(sdl_static_windows_libraries) $(optimisation_level) -DDEBUG -o build/Craftworlds
+all: $(object_files) $(icon_resource)
+	gcc main.c $(object_files) $(icon_resource) $(include_dirs) $(library_dirs) -static $(libraries_to_link) $(sdl_static_windows_libraries) $(optimisation_level) -DDEBUG -o build/Craftworlds
 
 build/glad.o:
 	mkdir -p build
@@ -29,6 +30,9 @@ build/shaders.o: $(preprocess) $(wildcard assets/shaders/*.glsl)
 
 $(preprocess): build/stb_image.o preprocess.c
 	gcc preprocess.c build/stb_image.o $(include_dirs) $(optimisation_level) -o preprocess
+
+$(icon_resource): assets/textures/misc/program_icon.ico assets/misc/resources.rc
+	windres assets/misc/resources.rc -O coff -o $(icon_resource)
 
 run: all
 	build/Craftworlds.exe 2>craftworlds_errors.log
