@@ -4,6 +4,7 @@
 #include<SDL2/SDL_opengl.h>
 
 #include"util.h"
+#include"noise.h"
 #include"world.h"
 #include"camera.h"
 #include"shaders.h"
@@ -73,6 +74,7 @@ int main(int argc, char** argv)
 
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glEnable(GL_CULL_FACE);
+    glEnable(GL_DEPTH_TEST);
     glFrontFace(GL_CW);
 
     initialise_timer();
@@ -86,11 +88,13 @@ int main(int argc, char** argv)
 
     // Make the first terrain chunk
     load_block_textures();
+    init_noise(0);
     CHUNK* chunk = make_chunk(at(0.0f, 0.0f, 0.0f));
 
     // Create and configure the camera
     CAMERA player_camera = make_camera(PERSPECTIVE_PROJECTION, settings.window_width, settings.window_height, settings.fov);
-    vec3 initial_player_position = vec3_add_vec3(top_cube(10, -10), v3(0.0f, 3.0f, 0.0f));
+    // vec3 initial_player_position = vec3_add_vec3(top_cube(10, -10), v3(0.0f, 3.0f, 0.0f));
+    vec3 initial_player_position = v3(0, 0, 0);
     resize_renderer(&settings, &player_camera);
     move_camera(&player_camera, initial_player_position);
 

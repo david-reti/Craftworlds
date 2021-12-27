@@ -4,11 +4,11 @@ library_dirs=-LSDL2-2.0.16/x86_64-w64-mingw32/lib
 libraries_to_link=-lopengl32
 sdl_static_windows_libraries=-lmingw32 -lSDL2main -lSDL2 -mwindows -Wl,--dynamicbase -Wl,--nxcompat -Wl,--high-entropy-va -lm -ldinput8 -ldxguid -ldxerr8 -luser32 -lgdi32 -lwinmm -limm32 -lole32 -loleaut32 -lshell32 -lsetupapi -lversion -luuid
 optimisation_level=-Ofast
-object_files=build/glad.o build/stb_image.o build/block.images.o build/shaders.o
+object_files=build/glad.o build/stb_image.o build/block.images.o build/shaders.o build/noise.o
 icon_resource=build/icon.res
 
 all: $(object_files) $(icon_resource)
-	gcc main.c $(object_files) $(icon_resource) $(include_dirs) $(library_dirs) -static $(libraries_to_link) $(sdl_static_windows_libraries) $(optimisation_level) -DDEBUG -o build/Craftworlds
+	gcc main.c -g $(object_files) $(icon_resource) $(include_dirs) $(library_dirs) -static $(libraries_to_link) $(sdl_static_windows_libraries) $(optimisation_level) -DDEBUG -o build/Craftworlds
 
 build/glad.o:
 	mkdir -p build
@@ -17,6 +17,10 @@ build/glad.o:
 build/stb_image.o:
 	mkdir -p build
 	gcc stb_image.c $(optimisation_level) -c -o build/stb_image.o
+
+build/noise.o:
+	mkdir -p build
+	gcc opensimplex.c -Ofast -c -o build/noise.o
 
 build/block.images.o: $(preprocess) $(wildcard assets/textures/blocks/*.png)
 	$(preprocess) --images

@@ -11,7 +11,7 @@
 
 #define CHUNK_SIZE 32 // The maximum width and depth of chunks, in number of blocks
 #define CHUNK_MAX_HEIGHT 256 // The maximum height of chunks, in number of blocks
-#define CHUNK_INITIAL_ALLOC_BLOCKS 256 // The number of blocks to allocate vertex & index space for when a chunk is created. Increasing this reduces the number of allocations, but uses more memory
+#define CHUNK_INITIAL_ALLOC_BLOCKS 4096 // The number of blocks to allocate vertex & index space for when a chunk is created. Increasing this reduces the number of allocations, but uses more memory
 #define CHUNK_INDEX_TEXTURE_SIZE 2048 // The size of the texture used to store the indices which specify the texture to use for each cube
 
 typedef enum { CUBE_FACE_FRONT = 0b00000001,  CUBE_FACE_BACK   = 0b00000010, 
@@ -26,16 +26,23 @@ typedef struct CUBE
     unsigned long vertex_location, index_location, num_indices;
 } CUBE;
 
+typedef struct CUBE_TREE
+{
+    CHUNK_FILL_STATE full;
+    vec3 min, size;
+    struct CUBE_TREE* children[8];
+} CUBE_TREE;
+
 typedef struct CHUNK
 {
     mat4 tranform;
     vec3 position;
     BLOCK_VERTEX* vertices;
     unsigned int vertex_array_object, vertex_buffer, index_buffer, *indices, index_texture, index_texture_offset_x, index_texture_offset_y;
-    unsigned long num_vertices, num_indices, vertex_capacity, index_capacity;
+    unsigned long num_vertices, num_indices, vertex_capacity, index_capacity, cube_child_buffer_loc;
     GLuint* index_texture_data;
     CUBE* cubes;
-    CHUNK_FILL_STATE fill_state[CHUNK_MAX_HEIGHT];
+    CUBE_TREE cube_fill_state[8], *cube_child_buffer, *trees_to_update[256];
 } CHUNK;
 
 CHUNK* current_chunk = NULL;
@@ -77,8 +84,97 @@ unsigned int right_face_coords[]   = { 0, 0, 0, 1, 0, 0, 2, 3 };
 unsigned int top_face_coords[]     = { 0, 0, 0, 2, 0, 1, 0, 3 };
 unsigned int bottom_face_coords[]  = { 1, 0, 3, 0, 0, 0, 2, 0 };
 unsigned int* face_texcoords[] = { front_face_coords, back_face_coords, left_face_coords, right_face_coords, top_face_coords, bottom_face_coords };
-
 unsigned int block_textures;
+
+vec3 tree_child_transformations[] = {
+                                         0.0f, 0.0f, 0.0f,
+                                         1.0f, 0.0f, 0.0f,
+                                         0.0f, 0.0f, -1.0f,
+                                         1.0f, 0.0f, -1.0f,
+                                         0.0f, 1.0f, 0.0f,
+                                         1.0f, 1.0f, 0.0f, 
+                                         0.0f, 1.0f, -1.0f,
+                                         1.0f, 1.0f, -1.0f
+                                    };
+
+vec3 full_chunk = { CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE };
+
+vec3 vec3_invert_if_negative_z(vec3 vector)
+{
+    if(vector.z < 0) vector.z *= -1;
+    return vector;
+}
+
+// Returns a pointer to the node at the provided world-space position. 
+// If stop_at_first_match is true, then it will stop at the first node which is completely full, or completely empty 
+CUBE_TREE* cube_tree_find(CUBE_TREE* tree, vec3 position, bool stop_at_first_match)
+{
+    CUBE_TREE* cursor = tree;
+    vec3 origin = cursor->min;
+    while(!vec3_cmp(origin, position))
+    {
+        if(cursor->full == CHUNK_FULL || cursor->full == CHUNK_EMPTY)
+            return cursor;
+        origin = cursor->min;
+
+        cursor = cursor->children[origin.y < position.y * 4 + origin.z > position.z * 2 + origin.x < position.x];
+        if(cursor == NULL) return NULL;
+    }
+}
+
+void cube_tree_fill(CUBE_TREE* tree, vec3 position)
+{
+    CUBE_TREE* cursor = tree;
+    vec3 origin, size = full_chunk;
+    // printf("%f %f %f\n", size.x, size.y, size.z);
+    unsigned int num_to_update = 0, idx;
+    while(!vec3_cmp(origin, position) || size.x > 1)
+    {
+        if(cursor->full == CHUNK_FULL) break;
+        size = vec3_divide_scalar(size, 2);
+        origin = vec3_add_vec3(vec3_invert_if_negative_z(cursor->min), size);
+        idx = (origin.y <= position.y) * 4 + (-origin.z >= position.z) * 2 + (origin.x <= position.x);
+        if(!cursor->children[idx])
+        {
+            // fprintf(stderr, "%u\n", idx);
+            cursor->children[idx] = current_chunk->cube_child_buffer + current_chunk->cube_child_buffer_loc++;
+            cursor->children[idx]->min = vec3_add_vec3(cursor->min, vec3_scale(size, tree_child_transformations[idx]));
+            cursor->children[idx]->size = size;
+            // printf("min: %f %f %f\n", cursor->children[idx]->min.x, cursor->children[idx]->min.y, cursor->children[idx]->min.z);
+            // printf("size: %f %f %f\n", cursor->children[idx]->size.x, cursor->children[idx]->size.y, cursor->children[idx]->size.z);
+            if(vec3_cmp(cursor->children[idx]->min, position) && cursor->children[idx]->size.x == 1) cursor->children[idx]->full = CHUNK_FULL;
+        }
+        
+        current_chunk->trees_to_update[num_to_update++] = cursor;
+        cursor = cursor->children[idx];
+    }
+
+    // printf("min: %f %f %f\n", cursor->min.x, cursor->min.y, cursor->min.z);
+    // printf("size: %f %f %f\n", cursor->size.x, cursor->size.y, cursor->size.z);
+
+    for(unsigned int i = 0; i < num_to_update; i++)
+    {
+        if(current_chunk->trees_to_update[i]->full == CHUNK_PARTIALLY_FULL)
+        {
+            current_chunk->trees_to_update[i]->full = CHUNK_FULL;
+            for(unsigned char j = 0; j < 8; j++) 
+                if(!current_chunk->trees_to_update[i]->children[j]) current_chunk->trees_to_update[i]->full = CHUNK_PARTIALLY_FULL;
+            if(current_chunk->trees_to_update[i]->full == CHUNK_FULL)
+            {
+                for(unsigned char j = 0; j < 8; j++)
+                    current_chunk->trees_to_update[i]->children[j] = NULL;
+            }
+
+        }
+        else if(current_chunk->trees_to_update[i]->full == CHUNK_EMPTY) current_chunk->trees_to_update[i]->full = CHUNK_PARTIALLY_FULL;
+    }
+}
+
+void cube_tree_empty(CUBE_TREE* tree, vec3 position)
+{
+
+}
+
 void load_block_textures()
 {
     glGenTextures(1, &block_textures);
@@ -122,11 +218,17 @@ CUBE* get_cube(vec3 point)
 
 void cube_faces(CUBE* cube_to_add, vec3 position, vec3 size, CUBE_FACES faces_to_add)
 {
-    if(current_chunk->num_vertices + 8 > current_chunk->vertex_capacity)
+    if(current_chunk->num_vertices + 32 > current_chunk->vertex_capacity || current_chunk->num_indices + 32 > current_chunk->index_capacity)
     {
         // Allocate more space for vertices and indices. Since there are more indices than vertices per cube, the number of indices grows faster as well
-        current_chunk->vertices = realloc(current_chunk->vertices, (current_chunk->vertex_capacity *= 2) * sizeof(BLOCK_VERTEX));
-        current_chunk->indices = realloc(current_chunk->indices, (current_chunk->index_capacity *= 4.5) * sizeof(unsigned int));
+        BLOCK_VERTEX* vertices; unsigned int* indices;
+        if((vertices = realloc(current_chunk->vertices, current_chunk->vertex_capacity * 2 * sizeof(BLOCK_VERTEX))) == NULL)
+            exit_with_error("Memory allocation error", "realloc() failed during chunk generation - likely run out of memory");
+        if((indices = realloc(current_chunk->indices, current_chunk->index_capacity * 4 * sizeof(unsigned int))) == NULL)
+            exit_with_error("Memory allocation error", "realloc() failed during chunk generation - likely ran out of memory");
+        current_chunk->vertex_capacity *= 2;
+        current_chunk->index_capacity *= 4;
+        current_chunk->vertices = vertices; current_chunk->indices = indices;
     }
 
     cube_to_add->vertex_location = current_chunk->num_vertices;
@@ -281,25 +383,51 @@ vec3 top_cube(float x, float z)
     while(on_top->type == EMPTY && y > 0)
         on_top = get_cube(at(x, y--, z));
     if(on_top->type != EMPTY)
-        return at(x, y, z);
-    return at(0, 0, 0);
+        return at(x, y + 1, z);
+    return at(-1, -1, -1);
 }
 
 // Generates the vertices and indices for a chunk based on its cube array.
 void recalculate_chunk_model()
 {
     vec3 block_position;
-    unsigned int i = 1, range_min = 0, range_max = CHUNK_MAX_HEIGHT;
-    while(range_max - range_min > 1 && i < CHUNK_MAX_HEIGHT)
+    int num_to_visit = 0;
+    CUBE_TREE* to_visit[1024] = { NULL };
+    unsigned int i = 1, range_min = 0, range_max = CHUNK_SIZE, level; 
+    for(unsigned int i = 0; i < CHUNK_MAX_HEIGHT / CHUNK_SIZE; i++)
     {
-        if(current_chunk->fill_state[i - 1] == CHUNK_FULL)
+        CUBE_TREE* cursor = current_chunk->cube_fill_state + i;
+        if(cursor->full == CHUNK_FULL)
         {
-            block_position = at(0.0f, range_min, 0.0f);
-            cube_faces(get_cube(block_position), block_position, v3(CHUNK_SIZE, range_max, CHUNK_SIZE), CUBE_FACE_ALL);
+            cube_faces(get_cube(cursor->min), cursor->min, v3(CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE), CUBE_FACE_ALL & 0b11011111);
+            // printf("%f %f %f\n", cursor->size.x, cursor->size.y, cursor->size.z);
         }
-        return;
+        else if(cursor->full == CHUNK_PARTIALLY_FULL)
+        {
+            num_to_visit = 0;
+            while(cursor)
+            {
+                if(cursor->full == CHUNK_FULL)
+                {
+                    // fprintf(stderr, "min: %f %f %f\n", cursor->min.x, cursor->min.y, cursor->min.z);
+                    // fprintf(stderr, "size: %f %f %f\n", cursor->size.x, cursor->size.y, cursor->size.z);
+                    cube_faces(get_cube(cursor->min), cursor->min, cursor->size, CUBE_FACE_ALL);
+                    // printf("%f %f %f\n", cursor->size.x, cursor->size.y, cursor->size.z);
+                }
+                else
+                {
+                    for(unsigned int j = 0; j < 8; j++)
+                        if(cursor->children[j]) to_visit[num_to_visit++] = cursor->children[j];
+                }
+
+                // printf("g. min: %f %f %f\n", cursor->min.x, cursor->min.y, cursor->min.z);
+                // printf("g. size: %f %f %f\n", cursor->size.x, cursor->size.y, cursor->size.z);
+                // printf("%d\n", num_to_visit);
+                if(!num_to_visit) break;
+                cursor = to_visit[--num_to_visit];
+            }
+        }
     }
-    return;
 
     // for(long long i = 0; i < CHUNK_SIZE; i++)
     // {
@@ -334,17 +462,21 @@ void recalculate_chunk_model()
     // }
 }
 
-void place_block(BLOCK_TYPE type, vec3 position)
+CUBE_TREE* parent_tree(CHUNK* chunk, vec3 position) { return &(chunk->cube_fill_state[(int)position.y / CHUNK_SIZE]); }
+
+void place_block(BLOCK_TYPE type, vec3 position, bool recalculate_model)
 {
-    // Set the locations of the current cube's vertices and indices in the chunk's buffers
-    get_cube(at(position.x, position.y, position.z))->type = type;
-    recalculate_chunk_model();
+    get_cube(position)->type = type;
+    // if(parent_tree(current_chunk, position)->size.x == 0) printf("a\n");
+    cube_tree_fill(parent_tree(current_chunk, position), position);
+    if(recalculate_model) recalculate_chunk_model();
 }
 
-void remove_block(vec3 position)
+void remove_block(vec3 position, bool recalulate_model)
 {
-    get_cube(at(position.x, position.y, position.z))->type = EMPTY;
-    recalculate_chunk_model();
+    get_cube(position)->type = EMPTY;
+    cube_tree_empty(parent_tree(current_chunk, position), position);
+    if(recalulate_model) recalculate_chunk_model();
 }
 
 // This is separated out because it's possible to create chunks in the existing chunk buffer
@@ -356,6 +488,7 @@ CHUNK* allocate_chunk_memory()
     to_return->vertices = calloc(to_return->vertex_capacity, sizeof(BLOCK_VERTEX));
     to_return->indices = calloc(to_return->index_capacity, sizeof(unsigned int));
     to_return->cubes = calloc(CHUNK_SIZE * CHUNK_MAX_HEIGHT * CHUNK_SIZE, sizeof(CUBE));
+    to_return->cube_child_buffer = calloc(CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * (CHUNK_MAX_HEIGHT / CHUNK_SIZE), sizeof(CUBE_TREE));
     to_return->index_texture_data = calloc(CHUNK_INDEX_TEXTURE_SIZE * CHUNK_INDEX_TEXTURE_SIZE, sizeof(GLuint));
     return to_return;
 }
@@ -366,6 +499,13 @@ CHUNK* make_chunk(vec3 position)
     to_return->tranform = translate(position);
     current_chunk = to_return;
 
+    for(unsigned int i = 0; i < CHUNK_MAX_HEIGHT / CHUNK_SIZE; i++)
+    {
+        current_chunk->cube_fill_state[i].min = v3(0, i * CHUNK_SIZE, 0);
+        current_chunk->cube_fill_state[i].size = full_chunk;
+    }
+
+    vec3 cube_position;
     #ifdef DEBUG
     LARGE_INTEGER chunk_gen_start_time, chunk_gen_end_time;
     QueryPerformanceCounter(&chunk_gen_start_time);
@@ -374,14 +514,41 @@ CHUNK* make_chunk(vec3 position)
     {
         for(unsigned int j = 0; j < CHUNK_MAX_HEIGHT; j++)
         {
-            for(unsigned int k = 0; k < CHUNK_SIZE; k++)
+            for(int k = 0; k < CHUNK_SIZE; k++)
             {
-                if(j == CHUNK_MAX_HEIGHT - 1) get_cube(at((float)i, (float)j, -((float)k)))->type = GRASS;
-                else get_cube(at((float)i, (float)j, -((float)k)))->type = SOIL;
+                place_block(SOIL, at(i, j, -k), false);
             }
         }
     }
-    current_chunk->fill_state[0] = CHUNK_FULL;
+
+    // place_block(SOIL, at(0, 0, 0), false);
+    
+    // place_block(SOIL, at(0, 0, 0), false);
+    // place_block(SOIL, at(1, 0, 0), false);
+    // place_block(SOIL, at(0, 0, 0), false);
+    // place_block(SOIL, at(1, 0, -1), false);
+    // place_block(SOIL, at(0, 1, 0), false);
+    // place_block(SOIL, at(1, 1, 0), false);
+    // place_block(SOIL, at(0, 1, -1), false);
+    // place_block(SOIL, at(1, 1, -1), false);
+
+    // Make all the top blocks of the chunk grass blocks
+    // for(int i = 0; i < CHUNK_SIZE; i++)
+    // {
+    //     for(int j = 0; j < CHUNK_SIZE; j++)
+    //     {
+    //         vec3 cube_position = top_cube(i, -j);
+    //         if(!vec3_cmp(cube_position, at(-1, -1, -1))) get_cube(cube_position)->type = GRASS;
+    //     }
+    // }
+
+    // current_chunk->cube_fill_state[7].full = CHUNK_PARTIALLY_FULL;
+    // for(unsigned int i = 0; i < 8; i++) current_chunk->cube_fill_state[7].children[i] = NULL;
+    // current_chunk->cube_fill_state[7].children[0] = calloc(1, sizeof(CUBE_TREE));
+    // current_chunk->cube_fill_state[7].children[0]->full = CHUNK_FULL;
+    // current_chunk->cube_fill_state[7].children[0]->min = v3(0, 223, 0);
+    // current_chunk->cube_fill_state[7].children[0]->size = v3(16, 16, 16);
+
     recalculate_chunk_model();
     #ifdef DEBUG
     QueryPerformanceCounter(&chunk_gen_end_time);
@@ -424,6 +591,7 @@ void render_chunk(CHUNK* to_render)
 void unload_chunk(CHUNK* to_free)
 {
     free(to_free->index_texture_data);
+    free(to_free->cube_child_buffer);
     free(to_free->cubes);
     free(to_free->vertices);
     free(to_free->indices);

@@ -162,6 +162,12 @@ vec3 vec3_cross(vec3 vector1, vec3 vector2)
     return to_return;
 } 
 
+// Compare - returns true when both vectors are the same, and false if they are different
+bool vec3_cmp(vec3 vector1, vec3 vector2)
+{
+    return (vector1.x == vector2.x && vector1.y == vector2.y && vector1.z == vector2.z);
+}
+
 vec4 vec4_add_scalar(vec4 vector, float toadd)
 {
     vector.x += toadd;
