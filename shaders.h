@@ -2,6 +2,7 @@
 #define SHADERS_H
 #include"util.h"
 #include"math3d.h"
+#include"camera.h"
 
 unsigned char* stbi_load_from_file(FILE*, int*, int*, int*, int);
 void stbi_image_free(void*);
@@ -10,9 +11,9 @@ void stbi_image_free(void*);
 // 1 - Model Matrix (tranformation - local -> world space)
 // 2 - View Matrix (world -> camera space)
 // 3 - Projection Matrix (camera -> clip space)
-#define NUM_SHADERS 3
-typedef enum            { BLOCK_VERTEX_SHADER, BLOCK_FRAGMENT_SHADER, DEBUG_FRAGMENT_SHADER } SHADER;
-char* shader_names[] =  {"block-vertex",      "block-fragment",      "debug-fragment" };
+#define NUM_SHADERS 5
+typedef enum            { BLOCK_VERTEX_SHADER, BLOCK_FRAGMENT_SHADER, DEBUG_FRAGMENT_SHADER, SKY_VERTEX_SHADER, SKY_FRAGMENT_SHADER } SHADER;
+char* shader_names[] =  {"block-vertex",      "block-fragment",      "debug-fragment",      "sky-vertex",      "sky-fragment" };
 typedef enum { MODEL_MATRIX = 3, VIEW_MATRIX = 4, PROJECTION_MATRIX = 5 } SHADER_VALUE;
 unsigned int shaders[NUM_SHADERS] = { 0 };
 unsigned int current_shader_program = 0;
@@ -21,20 +22,15 @@ extern char _binary_build_shaders_txt_start[];
 extern char _binary_build_shaders_txt_end[];
 extern char _binary_build_shaders_txt_length[];
 
-typedef struct BLOCK_VERTEX
-{
-    vec3 position;
-    vec2 uv, uv2;
-} BLOCK_VERTEX;
-
-#define NUM_VERTEX_PROPERTIES 3
-unsigned int vertex_attrib_sizes[] = { 3, 2, 2 };
-typedef enum { VERTEX_POSITION = 0b10000000, VERTEX_UV = 0b01000000, VERTEX_UV2 = 0b00100000 } VERTEX_PROPERTY;
+#define NUM_VERTEX_PROPERTIES 5
+unsigned int vertex_attrib_sizes[] = { 3, 2, 2, 3, 3 };
+typedef enum { VERTEX_POSITION = 0b10000000, VERTEX_UV = 0b01000000, VERTEX_UV2 = 0b00100000, VERTEX_COLOUR = 0b00010000, VERTEX_NORMAL = 0b00001000 } VERTEX_PROPERTY;
 
 #ifndef ONLY_INCLUDE_DEFINITIONS
 // Update methods for each data type used in the shaders. Shader_update_methods is an array containing the method to use for each value.
 void update_shader_matrix(unsigned int shader_program, SHADER_VALUE value, void* to_set) { glUniformMatrix4fv(value, 1, GL_FALSE, (const GLfloat*)((mat4*)to_set)->values); };
 void (*shader_update_methods[])(unsigned int, SHADER_VALUE, void*) = { NULL, NULL, NULL, update_shader_matrix, update_shader_matrix, update_shader_matrix };
+void set_shader_value(SHADER_VALUE value, void* to_set) { shader_update_methods[value](current_shader_program, value, to_set); }
 
 unsigned int load_shader(unsigned long type_of_shader, SHADER shader_to_load) // Internal
 {
@@ -59,10 +55,12 @@ unsigned int load_shader(unsigned long type_of_shader, SHADER shader_to_load) //
     return to_return;
 }
 
-void apply_shader_program(unsigned int shader_program)
+void apply_shader_program(unsigned int shader_program, CAMERA* camera)
 {
     glUseProgram(shader_program);
     current_shader_program = shader_program;
+    set_shader_value(PROJECTION_MATRIX, &(camera->projection));
+    set_shader_value(VIEW_MATRIX, &(camera->view));
 }
 
 unsigned int link_program(unsigned int vertex_shader, unsigned int fragment_shader) // Internal
@@ -83,7 +81,6 @@ unsigned int link_program(unsigned int vertex_shader, unsigned int fragment_shad
         exit_with_error("Could not link shader program", error_info);
     }
 
-    apply_shader_program(to_return);
     return to_return;
 }
 
@@ -96,14 +93,23 @@ unsigned int shader_program(SHADER vertex, SHADER fragment)
     return link_program(shaders[vertex], shaders[fragment]);
 }
 
-void set_shader_value(SHADER_VALUE value, void* to_set) { shader_update_methods[value](current_shader_program, value, to_set); }
-
 void unload_shaders() { for(unsigned int i = 0; i < NUM_SHADERS; i++) glDeleteShader(shaders[i]); }
+
+size_t vertex_size(VERTEX_PROPERTY properties_used)
+{
+    size_t to_return = 0;
+    for(unsigned char i = 0; i < NUM_VERTEX_PROPERTIES; i++)
+    {
+        if(properties_used & (1 << (7 - i)))
+            to_return += vertex_attrib_sizes[i] * sizeof(GLfloat);
+    }
+    return to_return;
+}
 
 void configure_vertex_properties(VERTEX_PROPERTY properties_to_use)
 {
     unsigned long long stride = 0, offsets[8] = { 0 };
-    for(unsigned int i = 0; i < NUM_VERTEX_PROPERTIES; i++)
+    for(unsigned char i = 0; i < NUM_VERTEX_PROPERTIES; i++)
     {
         if(properties_to_use & (1 << (7 - i)))
         {
@@ -112,7 +118,7 @@ void configure_vertex_properties(VERTEX_PROPERTY properties_to_use)
         }
     }
 
-    for(unsigned int i = 0; i < NUM_VERTEX_PROPERTIES; i++)
+    for(unsigned char i = 0; i < NUM_VERTEX_PROPERTIES; i++)
     {
         if(properties_to_use & (1 << (7 - i)))
         {

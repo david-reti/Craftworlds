@@ -4,7 +4,7 @@ library_dirs=-LSDL2-2.0.16/x86_64-w64-mingw32/lib
 libraries_to_link=-lopengl32
 sdl_static_windows_libraries=-lmingw32 -lSDL2main -lSDL2 -mwindows -Wl,--dynamicbase -Wl,--nxcompat -Wl,--high-entropy-va -lm -ldinput8 -ldxguid -ldxerr8 -luser32 -lgdi32 -lwinmm -limm32 -lole32 -loleaut32 -lshell32 -lsetupapi -lversion -luuid
 optimisation_level=-Ofast
-object_files=build/glad.o build/stb_image.o build/block.images.o build/shaders.o build/noise.o
+object_files=build/glad.o build/stb_image.o build/block.images.o build/shaders.o build/noise.o build/models.o
 icon_resource=build/icon.res
 
 all: $(object_files) $(icon_resource)
@@ -31,6 +31,11 @@ build/shaders.o: $(preprocess) $(wildcard assets/shaders/*.glsl)
 	$(preprocess) --shaders
 	ld -r -b binary -o build/shaders.o build/shaders.txt
 	rm -f build/shaders.txt
+
+build/models.o: $(preprocess) $(wildcard assets/models/*.obj)
+	$(preprocess) --models
+	ld -r -b binary -o build/models.o build/predefined.models
+	rm -f build/predefined.models
 
 $(preprocess): build/stb_image.o preprocess.c
 	gcc preprocess.c build/stb_image.o $(include_dirs) $(optimisation_level) -o preprocess

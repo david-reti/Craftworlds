@@ -84,17 +84,18 @@ int main(int argc, char** argv)
     // Load the vertex & fragment shaders
     unsigned int blocks_shader_program = shader_program(BLOCK_VERTEX_SHADER, BLOCK_FRAGMENT_SHADER);
     unsigned int debug_shader_program = shader_program(BLOCK_VERTEX_SHADER, DEBUG_FRAGMENT_SHADER);
-    apply_shader_program(blocks_shader_program);
+    unsigned int sky_shader_program = shader_program(SKY_VERTEX_SHADER, SKY_FRAGMENT_SHADER);
 
-    // Make the first terrain chunk
+    // Create the terrain chunks and world in general
     load_block_textures();
     init_noise(0);
     CHUNK* chunk = make_chunk(at(0.0f, 0.0f, 0.0f));
+    MODEL* sky_model = load_predefined_model(SKY_MODEL);
 
     // Create and configure the camera
     CAMERA player_camera = make_camera(PERSPECTIVE_PROJECTION, settings.window_width, settings.window_height, settings.fov);
-    // vec3 initial_player_position = vec3_add_vec3(top_cube(10, -10), v3(0.0f, 3.0f, 0.0f));
-    vec3 initial_player_position = v3(0, 0, 0);
+    vec3 initial_player_position = vec3_add_vec3(top_cube(10, -10), v3(0.0f, 2.0f, 0.0f));
+    // vec3 initial_player_position = v3(0, 0, 0);
     resize_renderer(&settings, &player_camera);
     move_camera(&player_camera, initial_player_position);
 
@@ -155,23 +156,33 @@ int main(int argc, char** argv)
         if(key_pressed[SDLK_q] && SDL_GetTicks() - setting_switch_cooldown > 400)
         {
             settings.render_wireframe = !settings.render_wireframe;
-            if(settings.render_wireframe) apply_shader_program(debug_shader_program);
-            else apply_shader_program(blocks_shader_program);
+            if(settings.render_wireframe) apply_shader_program(debug_shader_program, &player_camera);
+            else apply_shader_program(blocks_shader_program, &player_camera);
             switch_render_settings(&settings);
             resize_renderer(&settings, &player_camera);
             setting_switch_cooldown = SDL_GetTicks();
         }
 
-        set_shader_value(VIEW_MATRIX, &(player_camera.view));
-
         /// Render
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        // Draw the sky
+        glDisable(GL_DEPTH_TEST);
+        apply_shader_program(sky_shader_program, &player_camera);
+        mat4 player_translation = translate(player_camera.position);
+        set_shader_value(MODEL_MATRIX, &player_translation);
+        render_model(sky_model);
+
+        // Draw the chunks
+        glEnable(GL_DEPTH_TEST);
+        apply_shader_program(blocks_shader_program, &player_camera);
         render_chunk(chunk);
         SDL_GL_SwapWindow(window);
     }
 
     /// Cleanup
     unload_chunk(chunk);
+    unload_model(sky_model);
     unload_shaders();
     SDL_DestroyWindow(window);
     SDL_Quit();
