@@ -15,7 +15,7 @@
 #define CHUNK_INITIAL_ALLOC_BLOCKS 4096 // The number of blocks to allocate vertex & index space for when a chunk is created. Increasing this reduces the number of allocations, but uses more memory
 #define CHUNK_INDEX_TEXTURE_SIZE 2048 // The size of the texture used to store the indices which specify the texture to use for each cube
 
-#define SEA_LEVEL CHUNK_SIZE * 3 // This is the height at which water will be generated, and which any terrain will be added on, meaning that all chunks under this will be completely filled in
+#define BASE_LEVEL CHUNK_SIZE * 3 // This is the height at which water will be generated, and which any terrain will be added on, meaning that all chunks under this will be completely filled in
 
 typedef enum { CUBE_FACE_FRONT = 0b00000001,  CUBE_FACE_BACK   = 0b00000010, 
                CUBE_FACE_LEFT  = 0b00000100,  CUBE_FACE_RIGHT  = 0b00001000, 
@@ -48,8 +48,10 @@ typedef struct CHUNK
     CUBE_TREE cube_fill_state[8], *cube_child_buffer, *trees_to_update[256];
 } CHUNK;
 
-CHUNK* current_chunk = NULL;
+CHUNK **chunks;
 CUBE empty_cube = { 0 };
+const vec3 full_chunk = { CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE };
+unsigned int chunk_buffer_size;
 
 vec3 cube_vertex_positions[] = {
 //  Front
@@ -100,8 +102,6 @@ vec3 tree_child_transformations[] = {
                                          1.0f, 1.0f, -1.0f
                                     };
 
-vec3 full_chunk = { CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE };
-
 vec3 vec3_invert_if_negative_z(vec3 vector)
 {
     if(vector.z < 0) vector.z *= -1;
@@ -116,8 +116,7 @@ CUBE_TREE* cube_tree_find(CUBE_TREE* tree, vec3 position, bool stop_at_first_mat
     vec3 origin = cursor->min;
     while(!vec3_cmp(origin, position))
     {
-        if(cursor->full == CHUNK_FULL || cursor->full == CHUNK_EMPTY)
-            return cursor;
+        if(cursor->full == CHUNK_FULL || cursor->full == CHUNK_EMPTY) return cursor;
         origin = cursor->min;
 
         cursor = cursor->children[origin.y < position.y * 4 + origin.z > position.z * 2 + origin.x < position.x];
@@ -125,7 +124,7 @@ CUBE_TREE* cube_tree_find(CUBE_TREE* tree, vec3 position, bool stop_at_first_mat
     }
 }
 
-void cube_tree_fill(CUBE_TREE* tree, vec3 position)
+void cube_tree_fill(CHUNK* chunk, CUBE_TREE* tree, vec3 position)
 {
     CUBE_TREE* cursor = tree;
     vec3 origin, size = full_chunk;
@@ -142,7 +141,7 @@ void cube_tree_fill(CUBE_TREE* tree, vec3 position)
         if(!cursor->children[idx])
         {
             // fprintf(stderr, "%u\n", idx);
-            cursor->children[idx] = current_chunk->cube_child_buffer + current_chunk->cube_child_buffer_size++;
+            cursor->children[idx] = chunk->cube_child_buffer + chunk->cube_child_buffer_size++;
             cursor->children[idx]->min = vec3_add_vec3(cursor->min, vec3_scale(size, tree_child_transformations[idx]));
             cursor->children[idx]->size = size;
             // printf("min: %f %f %f\n", cursor->children[idx]->min.x, cursor->children[idx]->min.y, cursor->children[idx]->min.z);
@@ -150,7 +149,7 @@ void cube_tree_fill(CUBE_TREE* tree, vec3 position)
             if(vec3_cmp(cursor->children[idx]->min, position) && cursor->children[idx]->size.x == 1) cursor->children[idx]->full = CHUNK_FULL;
         }
         
-        current_chunk->trees_to_update[num_to_update++] = cursor;
+        chunk->trees_to_update[num_to_update++] = cursor;
         cursor = cursor->children[idx];
     }
 
@@ -159,20 +158,20 @@ void cube_tree_fill(CUBE_TREE* tree, vec3 position)
 
     for(int i = num_to_update - 1; i >= 0; i--)
     {
-        if(current_chunk->trees_to_update[i]->full == CHUNK_PARTIALLY_FULL)
+        if(chunk->trees_to_update[i]->full == CHUNK_PARTIALLY_FULL)
         {
-            current_chunk->trees_to_update[i]->full = CHUNK_FULL;
+            chunk->trees_to_update[i]->full = CHUNK_FULL;
             for(unsigned char j = 0; j < 8; j++)
             {
-                if(!current_chunk->trees_to_update[i]->children[j]) current_chunk->trees_to_update[i]->full = CHUNK_PARTIALLY_FULL;
-                else if(current_chunk->trees_to_update[i]->children[j]->full != CHUNK_FULL) current_chunk->trees_to_update[i]->full = CHUNK_PARTIALLY_FULL;
+                if(!chunk->trees_to_update[i]->children[j]) chunk->trees_to_update[i]->full = CHUNK_PARTIALLY_FULL;
+                else if(chunk->trees_to_update[i]->children[j]->full != CHUNK_FULL) chunk->trees_to_update[i]->full = CHUNK_PARTIALLY_FULL;
             }
         }
-        else if(current_chunk->trees_to_update[i]->full == CHUNK_EMPTY) current_chunk->trees_to_update[i]->full = CHUNK_PARTIALLY_FULL;
+        else if(chunk->trees_to_update[i]->full == CHUNK_EMPTY) chunk->trees_to_update[i]->full = CHUNK_PARTIALLY_FULL;
     }
 }
 
-void cube_tree_empty(CUBE_TREE* tree, vec3 position)
+void cube_tree_empty(CHUNK* chunk, CUBE_TREE* tree, vec3 position)
 {
 
 }
@@ -194,7 +193,7 @@ void load_block_textures()
     glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
 }
 
-BLOCK_VERTEX cube_vertex(unsigned char position_index, unsigned char face_index, vec3 place_at, vec3 size) 
+BLOCK_VERTEX cube_vertex(CHUNK* chunk, unsigned char position_index, unsigned char face_index, vec3 place_at, vec3 size) 
 { 
     BLOCK_VERTEX to_return;
     to_return.position = vec3_add_vec3(vec3_scale(cube_vertex_positions[position_index], size), place_at);
@@ -206,31 +205,31 @@ BLOCK_VERTEX cube_vertex(unsigned char position_index, unsigned char face_index,
     else if (face == CUBE_FACE_TOP || face == CUBE_FACE_BOTTOM) face_uv_scale = v2(size.x, size.z);
 
     to_return.uv = vec2_scale_vec2(cube_texcoords[face_texcoords[face_index][position_index]], face_uv_scale);
-    to_return.uv2 = v2(current_chunk->index_texture_offset_x, current_chunk->index_texture_offset_y);
+    to_return.uv2 = v2(chunk->index_texture_offset_x, chunk->index_texture_offset_y);
     return to_return;
 }
 
-CUBE* get_cube(vec3 point)
+CUBE* get_cube(CHUNK* parent_chunk, vec3 point)
 {
     long long x = (long long)point.x, y = (long long)point.y, z = (long long)point.z;
     if(x < 0 || y < 0 || x >= CHUNK_SIZE || y >= CHUNK_MAX_HEIGHT || z > 0 || abs(z) >= CHUNK_SIZE)
         return &empty_cube;
-    return current_chunk->cubes + (x + (abs(z) * CHUNK_SIZE) + (y * CHUNK_SIZE * CHUNK_SIZE));
+    return parent_chunk->cubes + (x + (abs(z) * CHUNK_SIZE) + (y * CHUNK_SIZE * CHUNK_SIZE));
 }
 
-void cube_faces(MODEL* to_fill, vec3 position, vec3 size, CUBE_FACES faces_to_add)
+void cube_faces(CHUNK* to_fill, vec3 position, vec3 size, CUBE_FACES faces_to_add)
 {
-    if(to_fill->num_vertices + 32 > to_fill->vertex_capacity || to_fill->num_indices + 32 > to_fill->index_capacity)
+    if(to_fill->model->num_vertices + 32 > to_fill->model->vertex_capacity || to_fill->model->num_indices + 32 > to_fill->model->index_capacity)
     {
         // Allocate more space for vertices and indices. Since there are more indices than vertices per cube, the number of indices grows faster as well
         BLOCK_VERTEX* vertices; unsigned int* indices;
-        if((vertices = realloc(to_fill->vertices, to_fill->vertex_capacity * 2 * sizeof(BLOCK_VERTEX))) == NULL)
+        if((vertices = realloc(to_fill->model->vertices, to_fill->model->vertex_capacity * 2 * sizeof(BLOCK_VERTEX))) == NULL)
             exit_with_error("Memory allocation error", "realloc() failed during chunk generation - likely run out of memory");
-        if((indices = realloc(to_fill->indices, to_fill->index_capacity * 4 * sizeof(unsigned int))) == NULL)
+        if((indices = realloc(to_fill->model->indices, to_fill->model->index_capacity * 4 * sizeof(unsigned int))) == NULL)
             exit_with_error("Memory allocation error", "realloc() failed during chunk generation - likely ran out of memory");
-        to_fill->vertex_capacity *= 2;
-        to_fill->index_capacity *= 4;
-        to_fill->vertices = vertices; to_fill->indices = indices;
+        to_fill->model->vertex_capacity *= 2;
+        to_fill->model->index_capacity *= 4;
+        to_fill->model->vertices = vertices; to_fill->model->indices = indices;
     }
 
     vec3 fill_to;
@@ -244,7 +243,7 @@ void cube_faces(MODEL* to_fill, vec3 position, vec3 size, CUBE_FACES faces_to_ad
         if(faces_to_add & face_to_add)
         {
             // Copy the indices for the current face
-            index_loc = to_fill->indices + to_fill->num_indices + num_indices_added;
+            index_loc = to_fill->model->indices + to_fill->model->num_indices + num_indices_added;
             memcpy(index_loc, faces[i], sizeof(unsigned int) * 6);
             memset(indices_added, 0, 8 * sizeof(unsigned int));
 
@@ -253,140 +252,140 @@ void cube_faces(MODEL* to_fill, vec3 position, vec3 size, CUBE_FACES faces_to_ad
             {
                 if(!indices_added[index_loc[j]])
                 {
-                    ((BLOCK_VERTEX*)to_fill->vertices)[to_fill->num_vertices + num_vertices_added++] = cube_vertex(index_loc[j], i, position, size);
-                    indices_added[index_loc[j]] = to_fill->num_vertices + num_vertices_added - 1;
+                    ((BLOCK_VERTEX*)to_fill->model->vertices)[to_fill->model->num_vertices + num_vertices_added++] = cube_vertex(to_fill, index_loc[j], i, position, size);
+                    indices_added[index_loc[j]] = to_fill->model->num_vertices + num_vertices_added - 1;
                 }
                 index_loc[j] = indices_added[index_loc[j]];
             }
             num_indices_added += 6;
 
             // Updates the index texture for the face by looping through each block on the face, and updating the texture coordinate with the block texture ID
-            offset_x = current_chunk->index_texture_offset_x;
-            offset_y = current_chunk->index_texture_offset_y;
+            offset_x = to_fill->index_texture_offset_x;
+            offset_y = to_fill->index_texture_offset_y;
             x_limit = size.x;
             
             // I might move this into its own function in the future, but I think it would be tricky because of the number of variables involved
             // TODO: Clean this up
             if(face_to_add == CUBE_FACE_FRONT)
             {
-                if(size.y > current_chunk->index_texture_highest_y_offset) current_chunk->index_texture_highest_y_offset = size.y;
+                if(size.y > to_fill->index_texture_highest_y_offset) to_fill->index_texture_highest_y_offset = size.y;
                 for(float y = position.y; y < position.y + size.y; y++) 
                 {
                     for(float x = position.x; x < position.x + size.x; x++)
                     {
                         unsigned long index = (offset_y * CHUNK_INDEX_TEXTURE_SIZE) + offset_x++;
-                        face_cube_type = get_cube(at(x, y, position.z))->type;
-                        if(!block_face_textures[face_cube_type]) current_chunk->index_texture_data[index] = face_cube_type - 1;
-                        else current_chunk->index_texture_data[index] = block_face_textures[face_cube_type][i];
-                        if(offset_x == current_chunk->index_texture_offset_x + x_limit) { offset_x = current_chunk->index_texture_offset_x; offset_y++; }
+                        face_cube_type = get_cube(to_fill, at(x, y, position.z))->type;
+                        if(!block_face_textures[face_cube_type]) to_fill->index_texture_data[index] = face_cube_type - 1;
+                        else to_fill->index_texture_data[index] = block_face_textures[face_cube_type][i];
+                        if(offset_x == to_fill->index_texture_offset_x + x_limit) { offset_x = to_fill->index_texture_offset_x; offset_y++; }
                     }
                 }
             }
             else if(face_to_add == CUBE_FACE_BACK)
             {
-                if(size.y > current_chunk->index_texture_highest_y_offset) current_chunk->index_texture_highest_y_offset = size.y;
+                if(size.y > to_fill->index_texture_highest_y_offset) to_fill->index_texture_highest_y_offset = size.y;
                 for(float y = position.y; y < position.y + size.y; y++) 
                 {
                     for(float x = position.x + size.x - 1; x > position.x - 1; x--)
                     {
                         unsigned long index = (offset_y * CHUNK_INDEX_TEXTURE_SIZE) + offset_x++;
-                        face_cube_type = get_cube(at(x, y, position.z - size.z + 1))->type;
-                        if(!block_face_textures[face_cube_type]) current_chunk->index_texture_data[index] = face_cube_type - 1;
-                        else current_chunk->index_texture_data[index] = block_face_textures[face_cube_type][i];
-                        if(offset_x == current_chunk->index_texture_offset_x + x_limit) { offset_x = current_chunk->index_texture_offset_x; offset_y++; }
+                        face_cube_type = get_cube(to_fill, at(x, y, position.z - size.z + 1))->type;
+                        if(!block_face_textures[face_cube_type]) to_fill->index_texture_data[index] = face_cube_type - 1;
+                        else to_fill->index_texture_data[index] = block_face_textures[face_cube_type][i];
+                        if(offset_x == to_fill->index_texture_offset_x + x_limit) { offset_x = to_fill->index_texture_offset_x; offset_y++; }
                     }
                 }
             }
             else if(face_to_add == CUBE_FACE_LEFT)
             {
                 x_limit = size.z;
-                if(size.y > current_chunk->index_texture_highest_y_offset) current_chunk->index_texture_highest_y_offset = size.y;
+                if(size.y > to_fill->index_texture_highest_y_offset) to_fill->index_texture_highest_y_offset = size.y;
                 for(float y = position.y; y < position.y + size.y; y++) 
                 {
                     for(float z = position.z - size.z + 1; z < position.z + 1; z++)
                     {
                         unsigned long index = (offset_y * CHUNK_INDEX_TEXTURE_SIZE) + offset_x++;
-                        face_cube_type = get_cube(at(position.x, y, z))->type;
-                        if(!block_face_textures[face_cube_type]) current_chunk->index_texture_data[index] = face_cube_type - 1;
-                        else current_chunk->index_texture_data[index] = block_face_textures[face_cube_type][i];
-                        if(offset_x == current_chunk->index_texture_offset_x + x_limit) { offset_x = current_chunk->index_texture_offset_x; offset_y++; }
+                        face_cube_type = get_cube(to_fill, at(position.x, y, z))->type;
+                        if(!block_face_textures[face_cube_type]) to_fill->index_texture_data[index] = face_cube_type - 1;
+                        else to_fill->index_texture_data[index] = block_face_textures[face_cube_type][i];
+                        if(offset_x == to_fill->index_texture_offset_x + x_limit) { offset_x = to_fill->index_texture_offset_x; offset_y++; }
                     }
                 }
             }
             else if(face_to_add == CUBE_FACE_RIGHT)
             {
                 x_limit = size.z;
-                if(size.y > current_chunk->index_texture_highest_y_offset) current_chunk->index_texture_highest_y_offset = size.y;
+                if(size.y > to_fill->index_texture_highest_y_offset) to_fill->index_texture_highest_y_offset = size.y;
                 for(float y = position.y; y < position.y + size.y; y++) 
                 {
                     for(float z = position.z; z > position.z - size.z; z--)
                     {
                         unsigned long index = (offset_y * CHUNK_INDEX_TEXTURE_SIZE) + offset_x++;
-                        face_cube_type = get_cube(at(position.x + size.x - 1, y, z))->type;
-                        if(!block_face_textures[face_cube_type]) current_chunk->index_texture_data[index] = face_cube_type - 1;
-                        else current_chunk->index_texture_data[index] = block_face_textures[face_cube_type][i];
-                        if(offset_x == current_chunk->index_texture_offset_x + x_limit) { offset_x = current_chunk->index_texture_offset_x; offset_y++; }
+                        face_cube_type = get_cube(to_fill, at(position.x + size.x - 1, y, z))->type;
+                        if(!block_face_textures[face_cube_type]) to_fill->index_texture_data[index] = face_cube_type - 1;
+                        else to_fill->index_texture_data[index] = block_face_textures[face_cube_type][i];
+                        if(offset_x == to_fill->index_texture_offset_x + x_limit) { offset_x = to_fill->index_texture_offset_x; offset_y++; }
                     }
                 }
             }
             else if(face_to_add == CUBE_FACE_TOP)
             {
-                if(size.z > current_chunk->index_texture_highest_y_offset) current_chunk->index_texture_highest_y_offset = size.z;
+                if(size.z > to_fill->index_texture_highest_y_offset) to_fill->index_texture_highest_y_offset = size.z;
                 for(float z = position.z; z > position.z - size.z; z--) 
                 {
                     for(float x = position.x; x < position.x + size.x; x++)
                     {
                         unsigned long index = (offset_y * CHUNK_INDEX_TEXTURE_SIZE) + offset_x++;
-                        face_cube_type = get_cube(at(x, position.y + size.y - 1, z))->type;
-                        if(!block_face_textures[face_cube_type]) current_chunk->index_texture_data[index] = face_cube_type - 1;
-                        else current_chunk->index_texture_data[index] = block_face_textures[face_cube_type][i];
-                        if(offset_x == current_chunk->index_texture_offset_x + x_limit) { offset_x = current_chunk->index_texture_offset_x; offset_y++; }
+                        face_cube_type = get_cube(to_fill, at(x, position.y + size.y - 1, z))->type;
+                        if(!block_face_textures[face_cube_type]) to_fill->index_texture_data[index] = face_cube_type - 1;
+                        else to_fill->index_texture_data[index] = block_face_textures[face_cube_type][i];
+                        if(offset_x == to_fill->index_texture_offset_x + x_limit) { offset_x = to_fill->index_texture_offset_x; offset_y++; }
                     }
                 }
             }
             else if(face_to_add == CUBE_FACE_BOTTOM)
             {
-                if(size.z > current_chunk->index_texture_highest_y_offset) current_chunk->index_texture_highest_y_offset = size.z;
+                if(size.z > to_fill->index_texture_highest_y_offset) to_fill->index_texture_highest_y_offset = size.z;
                 for(float z = position.z - size.z + 1; z < position.z + 1; z++) 
                 {
                     for(float x = position.x; x < position.x + size.x; x++)
                     {
                         unsigned long index = (offset_y * CHUNK_INDEX_TEXTURE_SIZE) + offset_x++;
-                        face_cube_type = get_cube(at(x, position.y, z))->type;
-                        if(!block_face_textures[face_cube_type]) current_chunk->index_texture_data[index] = face_cube_type - 1;
-                        else current_chunk->index_texture_data[index] = block_face_textures[face_cube_type][i];
-                        if(offset_x == current_chunk->index_texture_offset_x + x_limit) { offset_x = current_chunk->index_texture_offset_x; offset_y++; }
+                        face_cube_type = get_cube(to_fill, at(x, position.y, z))->type;
+                        if(!block_face_textures[face_cube_type]) to_fill->index_texture_data[index] = face_cube_type - 1;
+                        else to_fill->index_texture_data[index] = block_face_textures[face_cube_type][i];
+                        if(offset_x == to_fill->index_texture_offset_x + x_limit) { offset_x = to_fill->index_texture_offset_x; offset_y++; }
                     }
                 }
             }
 
-            current_chunk->index_texture_offset_x += x_limit + 1;
-            if(current_chunk->index_texture_offset_x >= CHUNK_INDEX_TEXTURE_SIZE)
+            to_fill->index_texture_offset_x += x_limit + 1;
+            if(to_fill->index_texture_offset_x >= CHUNK_INDEX_TEXTURE_SIZE)
             {
-                current_chunk->index_texture_offset_x = 0;
-                current_chunk->index_texture_offset_y = current_chunk->index_texture_offset_y + current_chunk->index_texture_highest_y_offset + 1;
-                current_chunk->index_texture_highest_y_offset = 0;
+                to_fill->index_texture_offset_x = 0;
+                to_fill->index_texture_offset_y = to_fill->index_texture_offset_y + to_fill->index_texture_highest_y_offset + 1;
+                to_fill->index_texture_highest_y_offset = 0;
             }
         }
     }
 
-    to_fill->num_vertices += num_vertices_added;
-    to_fill->num_indices += num_indices_added;
+    to_fill->model->num_vertices += num_vertices_added;
+    to_fill->model->num_indices += num_indices_added;
 }
 
-vec3 top_cube(float x, float z)
+vec3 top_cube(CHUNK* chunk, float x, float z)
 {
     float y = CHUNK_MAX_HEIGHT;
-    CUBE* on_top = get_cube(at(x, y, z));
+    CUBE* on_top = get_cube(chunk, at(x, y, z));
     while(on_top->type == EMPTY && y > 0)
-        on_top = get_cube(at(x, y--, z));
+        on_top = get_cube(chunk, at(x, y--, z));
     if(on_top->type != EMPTY)
         return at(x, y + 1, z);
     return at(-1, -1, -1);
 }
 
 // Generates the vertices and indices for a chunk based on its cube array.
-void recalculate_chunk_model()
+void recalculate_chunk_model(CHUNK* to_recalculate)
 {
     vec3 block_position;
     int num_to_visit = 0;
@@ -394,10 +393,10 @@ void recalculate_chunk_model()
     unsigned int i = 1, range_min = 0, range_max = CHUNK_SIZE, level; 
     for(unsigned int i = 0; i < CHUNK_MAX_HEIGHT / CHUNK_SIZE; i++)
     {
-        CUBE_TREE* cursor = current_chunk->cube_fill_state + i;
+        CUBE_TREE* cursor = to_recalculate->cube_fill_state + i;
         if(cursor->full == CHUNK_FULL)
         {
-            cube_faces(current_chunk->model, cursor->min, v3(CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE), CUBE_FACE_ALL & 0b11011111);
+            cube_faces(to_recalculate, cursor->min, v3(CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE), CUBE_FACE_ALL & 0b11011111);
             // printf("%f %f %f\n", cursor->size.x, cursor->size.y, cursor->size.z);
         }
         else if(cursor->full == CHUNK_PARTIALLY_FULL)
@@ -409,7 +408,7 @@ void recalculate_chunk_model()
                 {
                     // fprintf(stderr, "min: %f %f %f\n", cursor->min.x, cursor->min.y, cursor->min.z);
                     // fprintf(stderr, "size: %f %f %f\n", cursor->size.x, cursor->size.y, cursor->size.z);
-                    cube_faces(current_chunk->model, cursor->min, cursor->size, CUBE_FACE_ALL);
+                    cube_faces(to_recalculate, cursor->min, cursor->size, CUBE_FACE_ALL);
                     // printf("%f %f %f\n", cursor->size.x, cursor->size.y, cursor->size.z);
                 }
                 else
@@ -430,19 +429,19 @@ void recalculate_chunk_model()
 
 CUBE_TREE* parent_tree(CHUNK* chunk, vec3 position) { return &(chunk->cube_fill_state[(int)position.y / CHUNK_SIZE]); }
 
-void place_block(BLOCK_TYPE type, vec3 position, bool recalculate_model)
+void place_block(CHUNK* chunk, BLOCK_TYPE type, vec3 position, bool recalculate_model)
 {
-    get_cube(position)->type = type;
+    get_cube(chunk, position)->type = type;
     // if(parent_tree(current_chunk, position)->size.x == 0) printf("a\n");
-    cube_tree_fill(parent_tree(current_chunk, position), position);
-    if(recalculate_model) recalculate_chunk_model();
+    cube_tree_fill(chunk, parent_tree(chunk, position), position);
+    if(recalculate_model) recalculate_chunk_model(chunk);
 }
 
-void remove_block(vec3 position, bool recalulate_model)
+void remove_block(CHUNK* chunk, vec3 position, bool recalulate_model)
 {
-    get_cube(position)->type = EMPTY;
-    cube_tree_empty(parent_tree(current_chunk, position), position);
-    if(recalulate_model) recalculate_chunk_model();
+    get_cube(chunk, position)->type = EMPTY;
+    cube_tree_empty(chunk, parent_tree(chunk, position), position);
+    if(recalulate_model) recalculate_chunk_model(chunk);
 }
 
 // This is separated out because it's possible to create chunks in the existing chunk buffer
@@ -456,16 +455,24 @@ CHUNK* allocate_chunk_memory()
     return to_return;
 }
 
-CHUNK* make_chunk(vec3 position)
+void initialize_chunk_buffer(unsigned int buffer_size)
 {
-    CHUNK* to_return = allocate_chunk_memory();
+    chunks = calloc(buffer_size, sizeof(CHUNK*));
+    for(unsigned int i = 0; i < buffer_size; i++) chunks[i] = allocate_chunk_memory();
+}
+
+// Optionally, the chunk can be generated into an already existing allocated chunk object - place_into. If this is null, memory will be allocated anew
+CHUNK* make_chunk(vec3 position, CHUNK* place_into)
+{
+    CHUNK* to_return = place_into;
+    if(!to_return) to_return = allocate_chunk_memory();
+
     to_return->tranform = translate(position);
-    current_chunk = to_return;
 
     for(unsigned int i = 0; i < CHUNK_MAX_HEIGHT / CHUNK_SIZE; i++)
     {
-        current_chunk->cube_fill_state[i].min = v3(0, i * CHUNK_SIZE, 0);
-        current_chunk->cube_fill_state[i].size = full_chunk;
+        to_return->cube_fill_state[i].min = v3(0, i * CHUNK_SIZE, 0);
+        to_return->cube_fill_state[i].size = full_chunk;
     }
 
     unsigned char noise_val[4] = { 0 };
@@ -482,37 +489,40 @@ CHUNK* make_chunk(vec3 position)
             unsigned int k = 0;
             for(;k < CHUNK_MAX_HEIGHT; k++)
             {
-                simplex(noise_val, i / 4, j / 4);
-                if(k < SEA_LEVEL + ((float)noise_val[0] / 255) * 40) place_block(SOIL, at(i, k, -j), false);
+                simplex(noise_val, position.x + i / 4, (-position.z) + (j / 4));
+                if(k < BASE_LEVEL + ((float)noise_val[0] / 255) * 40) place_block(to_return, SOIL, at(i, k, -j), false);
                 else break;
             }
-            get_cube(at(i, k - 1, -j))->type = GRASS;
+            get_cube(place_into, at(i, k - 1, -j))->type = GRASS;
         }
     }
-    recalculate_chunk_model();
+    recalculate_chunk_model(to_return);
     #ifdef DEBUG
     QueryPerformanceCounter(&chunk_gen_end_time);
     double genTime = ((double)(chunk_gen_end_time.QuadPart - chunk_gen_start_time.QuadPart) / frequency.QuadPart);
-    printf("Generated chunk at (%.2f, %.2f): took %lf seconds, %lu vertices, %lu indices\n", position.x, position.z, genTime, current_chunk->model->num_vertices, current_chunk->model->num_indices);
+    printf("Generated chunk at (%.2f, %.2f): took %lf seconds, %lu vertices, %lu indices\n", position.x, position.z, genTime, to_return->model->num_vertices, to_return->model->num_indices);
     #endif
+    return to_return;
+}
 
-    finalise_model(current_chunk->model);
-
+void finalise_chunk(CHUNK* to_finalise)
+{
     // Generate the texture index, then load the indices of all the vertices into it
-    glGenTextures(1, &(current_chunk->index_texture));
+    glGenTextures(1, &(to_finalise->index_texture));
     glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, current_chunk->index_texture);
+    glBindTexture(GL_TEXTURE_2D, to_finalise->index_texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32UI, CHUNK_INDEX_TEXTURE_SIZE, CHUNK_INDEX_TEXTURE_SIZE, 0, GL_RED_INTEGER, GL_UNSIGNED_INT, current_chunk->index_texture_data);
-
-    return to_return;
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32UI, CHUNK_INDEX_TEXTURE_SIZE, CHUNK_INDEX_TEXTURE_SIZE, 0, GL_RED_INTEGER, GL_UNSIGNED_INT, to_finalise->index_texture_data);
+    finalise_model(to_finalise->model);
 }
 
 void render_chunk(CHUNK* to_render)
 {
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, to_render->index_texture);
     set_shader_value(MODEL_MATRIX, &(to_render->tranform));
     render_model(to_render->model);
 }
@@ -524,6 +534,12 @@ void unload_chunk(CHUNK* to_free)
     free(to_free->cube_child_buffer);
     free(to_free->cubes);
     free(to_free);
+}
+
+void unload_chunk_buffer()
+{
+    for(unsigned int i = 0; i < chunk_buffer_size; i++) unload_chunk(chunks[i]);
+    free(chunks);
 }
 
 #endif

@@ -3,6 +3,7 @@
 #include<glad/glad.h>
 #include<SDL2/SDL_opengl.h>
 
+#include"os.h"
 #include"util.h"
 #include"noise.h"
 #include"world.h"
@@ -12,8 +13,8 @@
 typedef struct SETTINGS
 {
     float fov, look_sensitivity, max_render_distance;
-    unsigned int window_width, window_height;
-    bool invert_y_axis, show_fps, render_wireframe;
+    unsigned int window_width, window_height, chunk_buffer_size, num_threads_to_use;
+    bool invert_y_axis, show_fps, render_wireframe, render_sky;
 } SETTINGS;
 
 void resize_renderer(SETTINGS* settings, CAMERA* camera)
@@ -29,6 +30,21 @@ void switch_render_settings(SETTINGS* settings)
     else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 }
 
+#ifdef _WIN32
+typedef struct CHUNK_FOR_MULTITHREADING
+{
+    vec3 position;
+    CHUNK* chunk;
+} CHUNK_FOR_MULTITHREADING;
+
+unsigned long generate_chunk_multithreaded(void* chunk_description)
+{
+    CHUNK_FOR_MULTITHREADING* description = (CHUNK_FOR_MULTITHREADING*)chunk_description;
+    make_chunk(description->position, description->chunk);
+    return 0;
+}
+#endif
+
 int main(int argc, char** argv)
 {
     /// Initialize SDL
@@ -43,7 +59,10 @@ int main(int argc, char** argv)
                           .look_sensitivity = 0.5f,
                           .show_fps = true,
                           .render_wireframe = false,
-                          .max_render_distance = 500
+                          .max_render_distance = 500,
+                          .chunk_buffer_size = 9,
+                          .render_sky = true,
+                          .num_threads_to_use = 8
                         };
     bool key_pressed[256] = { 0 };
 
@@ -86,15 +105,31 @@ int main(int argc, char** argv)
     unsigned int debug_shader_program = shader_program(BLOCK_VERTEX_SHADER, DEBUG_FRAGMENT_SHADER);
     unsigned int sky_shader_program = shader_program(SKY_VERTEX_SHADER, SKY_FRAGMENT_SHADER);
 
-    // Create the terrain chunks and world in general
+    // Create the terrain chunks and world elements
     load_block_textures();
     init_noise(0);
-    CHUNK* chunk = make_chunk(at(0.0f, 0.0f, 0.0f));
+
+    // The chunks are generated into a buffer, and reassigned into a circular pattern, so that the memory only needs to be allocated once
+    initialize_chunk_buffer(settings.chunk_buffer_size);
+    
+    // The chunks are generated with multiple threads on operating systems where this is supported    
+    CHUNK_FOR_MULTITHREADING* chunks_to_generate = calloc(settings.chunk_buffer_size, sizeof(CHUNK_FOR_MULTITHREADING));
+    for(unsigned int i = 0; i < settings.chunk_buffer_size; i++)  
+    {
+        vec3 chunk_position = v3((float)((i % 3) * CHUNK_SIZE) - CHUNK_SIZE, 0, ((i / 3) * (float)-CHUNK_SIZE) + CHUNK_SIZE);
+        chunks_to_generate[i].chunk = chunks[i];
+        chunks_to_generate[i].position = chunk_position;
+    }
+
+    run_multithreaded(generate_chunk_multithreaded, chunks_to_generate, sizeof(CHUNK_FOR_MULTITHREADING), settings.chunk_buffer_size, settings.num_threads_to_use);
+    for(unsigned int i = 0; i < settings.chunk_buffer_size; i++) finalise_chunk(chunks[i]);
+    free(chunks_to_generate);
+
     MODEL* sky_model = load_predefined_model(SKY_MODEL);
 
     // Create and configure the camera
     CAMERA player_camera = make_camera(PERSPECTIVE_PROJECTION, settings.window_width, settings.window_height, settings.fov);
-    vec3 initial_player_position = vec3_add_vec3(top_cube(10, -10), v3(0.0f, 2.0f, 0.0f));
+    vec3 initial_player_position = vec3_add_vec3(top_cube(chunks[0], 10, -10), v3(0.0f, 2.0f, 0.0f));
     // vec3 initial_player_position = v3(0, 0, 0);
     resize_renderer(&settings, &player_camera);
     move_camera(&player_camera, initial_player_position);
@@ -153,35 +188,56 @@ int main(int argc, char** argv)
             move_camera(&player_camera, v3(-camera_speed * elapsed_time, 0.0f, 0.0f));
         if(key_pressed[SDLK_d])
             move_camera(&player_camera, v3(camera_speed * elapsed_time, 0.0f, 0.0f));
+        #ifdef DEBUG
         if(key_pressed[SDLK_q] && SDL_GetTicks() - setting_switch_cooldown > 400)
         {
             settings.render_wireframe = !settings.render_wireframe;
+            settings.render_sky = !settings.render_sky;
             if(settings.render_wireframe) apply_shader_program(debug_shader_program, &player_camera);
             else apply_shader_program(blocks_shader_program, &player_camera);
             switch_render_settings(&settings);
             resize_renderer(&settings, &player_camera);
             setting_switch_cooldown = SDL_GetTicks();
         }
+        #endif
 
         /// Render
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         // Draw the sky
+        #ifdef DEBUG
+        if(settings.render_sky)
+        {
+        #endif
         glDisable(GL_DEPTH_TEST);
         apply_shader_program(sky_shader_program, &player_camera);
         mat4 player_translation = translate(player_camera.position);
         set_shader_value(MODEL_MATRIX, &player_translation);
         render_model(sky_model);
+        glEnable(GL_DEPTH_TEST);
+        #ifdef DEBUG
+        }
+        #endif
 
         // Draw the chunks
-        glEnable(GL_DEPTH_TEST);
+        #ifdef DEBUG
+        if(settings.render_wireframe)
+        {
+            apply_shader_program(debug_shader_program, &player_camera);
+        }
+        else
+        {
+        #endif    
         apply_shader_program(blocks_shader_program, &player_camera);
-        render_chunk(chunk);
+        #ifdef DEBUG
+        }
+        #endif
+        for(unsigned int i = 0; i < settings.chunk_buffer_size; i++) render_chunk(chunks[i]);
         SDL_GL_SwapWindow(window);
     }
 
     /// Cleanup
-    unload_chunk(chunk);
+    unload_chunk_buffer();
     unload_model(sky_model);
     unload_shaders();
     SDL_DestroyWindow(window);
