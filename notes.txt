@@ -7,3 +7,7 @@ The name of the symbols to access data can be found by running objdump -f on the
 For static linking SDL, the libraries to link can be found by running SDL_CONFIG with the --static option
 
 Note: In order to tell
+
+Todo: - Improve terrain generation to stop inside faces from being drawn. Also: combine adjacent faces
+      - Move trees to preprocessing stage as they are slow to generate
+      - Find a better way to handle transparency

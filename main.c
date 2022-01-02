@@ -60,7 +60,7 @@ int main(int argc, char** argv)
                           .show_fps = true,
                           .render_wireframe = false,
                           .max_render_distance = 500,
-                          .chunk_buffer_size = 9,
+                          .chunk_buffer_size = 1,
                           .render_sky = true,
                           .num_threads_to_use = 8
                         };
@@ -94,6 +94,8 @@ int main(int argc, char** argv)
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glEnable(GL_CULL_FACE);
     glEnable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glFrontFace(GL_CW);
 
     initialise_timer();
@@ -121,7 +123,7 @@ int main(int argc, char** argv)
         chunks_to_generate[i].position = chunk_position;
     }
 
-    run_multithreaded(generate_chunk_multithreaded, chunks_to_generate, sizeof(CHUNK_FOR_MULTITHREADING), settings.chunk_buffer_size, settings.num_threads_to_use);
+    run_multithreaded(generate_chunk_multithreaded, chunks_to_generate, sizeof(CHUNK_FOR_MULTITHREADING), settings.chunk_buffer_size, settings.num_threads_to_use, true);
     for(unsigned int i = 0; i < settings.chunk_buffer_size; i++) finalise_chunk(chunks[i]);
     free(chunks_to_generate);
 
@@ -129,7 +131,7 @@ int main(int argc, char** argv)
 
     // Create and configure the camera
     CAMERA player_camera = make_camera(PERSPECTIVE_PROJECTION, settings.window_width, settings.window_height, settings.fov);
-    vec3 initial_player_position = vec3_add_vec3(top_cube(chunks[0], 10, -10), v3(0.0f, 2.0f, 0.0f));
+    vec3 initial_player_position = vec3_add_vec3(chunks[0]->position, vec3_add_vec3(top_cube(chunks[0], 10, -10), v3(0.0f, 2.8f, 0.0f)));
     // vec3 initial_player_position = v3(0, 0, 0);
     resize_renderer(&settings, &player_camera);
     move_camera(&player_camera, initial_player_position);

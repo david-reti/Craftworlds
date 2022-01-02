@@ -37,7 +37,7 @@ build/models.o: $(preprocess) $(wildcard assets/models/*.obj)
 	ld -r -b binary -o build/models.o build/predefined.models
 	rm -f build/predefined.models
 
-$(preprocess): build/stb_image.o preprocess.c
+$(preprocess): blocks.h build/stb_image.o preprocess.c
 	gcc preprocess.c build/stb_image.o $(include_dirs) $(optimisation_level) -o preprocess
 
 $(icon_resource): assets/textures/misc/program_icon.ico assets/misc/resources.rc
