@@ -140,6 +140,7 @@ int main(int argc, char** argv)
     float camera_pitch_limit_bottom = 89.0f, camera_pitch_limit_top = -89.0f;
 
     /// Event Processing Loop
+    vec3 selected_block;
     bool running = true;
     double elapsed_time = 0;
     unsigned long setting_switch_cooldown = 0;
@@ -202,6 +203,10 @@ int main(int argc, char** argv)
             setting_switch_cooldown = SDL_GetTicks();
         }
         #endif
+
+        selected_block = raycast_block(chunks[0], player_camera.position, player_camera.direction);
+        if(!vec3_cmp(selected_block, v3(-1.0, -1.0f, -1.0f)))
+            printf("Selected block: (%f, %f, %f)\n", selected_block.x, selected_block.y, selected_block.z);
 
         /// Render
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);

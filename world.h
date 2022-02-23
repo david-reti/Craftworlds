@@ -389,6 +389,11 @@ vec3 top_cube(CHUNK* chunk, float x, float z)
     return at(-1, -1, -1);
 }
 
+vec3 raycast_block(CHUNK* chunk, vec3 origin, vec3 ray)
+{
+    return v3(-1, -1, -1);
+}
+
 // Generates the vertices and indices for a chunk based on its cube array.
 void recalculate_chunk_model(CHUNK* to_recalculate, bool transparent)
 {
@@ -587,7 +592,9 @@ void render_chunk(CHUNK* to_render)
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, to_render->index_texture);
     set_shader_value(MODEL_MATRIX, &(to_render->tranform));
+    glEnable(GL_CULL_FACE);
     render_model(to_render->model);
+    glDisable(GL_CULL_FACE);
     render_model(to_render->transparency_model);
 }
 
